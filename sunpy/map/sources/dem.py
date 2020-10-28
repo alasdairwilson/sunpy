@@ -13,7 +13,7 @@ __all__ = ['DEMMap']
 
 
 class DEMMap(GenericMap):
-    """DEM Image Map.
+    """DEM Image Map.git 
 
     DEMs are recovered from multiwavelength solar instrumental data which, in combination with these
     instruments temperature responses. The following reads in DEM maps consisting of pixel specific temperature
