@@ -45,6 +45,7 @@ DEFAULT_URL_PORT = [{'url': 'http://docs.virtualsolar.org/WSDL/VSOi_rpc_literal.
                     {'url': 'https://sdac.virtualsolar.org/API/VSOi_rpc_literal.wsdl',
                      'port': 'sdacVSOi'}]
 
+SOAP_URL = 'http://vso.nso.edu/cgi-bin/VSO/PROD/vsoi_wsdl.cgi'
 
 class _Str(str):
     """ Subclass of string that contains a meta attribute for the
@@ -67,6 +68,11 @@ def get_online_vso_url():
     """
     for mirror in DEFAULT_URL_PORT:
         if check_connection(mirror['url']):
+            if mirror['port'] is 'nsoVSOi':
+                if check_connection(SOAP_URL):
+                    return mirror
+                else:
+                    pass
             return mirror
 
 
