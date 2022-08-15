@@ -267,6 +267,7 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
         parts individually.
         """  # noqa
         query = attr.and_(*query)
+        import pdb; pdb.set_trace()
         results = query_walker.create(query, self)
 
         # If we have searched the VSO but no results were returned, but another
