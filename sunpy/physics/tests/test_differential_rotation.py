@@ -1,25 +1,28 @@
-import os
-import pytest
 
 import numpy as np
+import pytest
+
 import astropy.units as u
-from astropy.coordinates import SkyCoord
-from astropy.coordinates import Longitude
+from astropy.coordinates import Longitude, SkyCoord
 from astropy.tests.helper import assert_quantity_allclose
 from astropy.time import TimeDelta
 
+import sunpy.map
 from sunpy.coordinates import frames
 from sunpy.coordinates.ephemeris import get_earth
+from sunpy.coordinates.metaframes import RotatedSunFrame
+from sunpy.coordinates.transformations import transform_with_sun_center
 from sunpy.map.maputils import map_edges
-from sunpy.physics.differential_rotation import (diff_rot, solar_rotate_coordinate,
-                                                 differential_rotate,
-                                                 _get_new_observer, _rotate_submap_edge,
-                                                 _get_extreme_position, _get_bounding_coordinates,
-                                                 _warp_sun_coordinates)
-import sunpy.data.test
-import sunpy.map
-
-# pylint: disable=C0103,R0904,W0201,W0212,W0232,E1103
+from sunpy.physics.differential_rotation import (
+    _get_bounding_coordinates,
+    _get_extreme_position,
+    _get_new_observer,
+    _rotate_submap_edge,
+    _warp_sun_coordinates,
+    diff_rot,
+    differential_rotate,
+    solar_rotate_coordinate,
+)
 
 # Please note the numbers in these tests are not checked for physical
 # accuracy, only that they are the values the function was outputting upon
@@ -47,26 +50,19 @@ import sunpy.map
 # was largely based on that in SSWIDL.
 
 
-testpath = sunpy.data.test.rootdir
-
-@pytest.fixture
-def aia171_test_map():
-    return sunpy.map.Map(os.path.join(testpath, 'aia_171_level1.fits'))
-
-
 @pytest.fixture
 def all_off_disk_map(aia171_test_map):
-    return aia171_test_map.submap((1, 1)*u.pix, (11, 12)*u.pix)
+    return aia171_test_map.submap((1, 1)*u.pix, top_right=(11, 12)*u.pix)
 
 
 @pytest.fixture
 def all_on_disk_map(aia171_test_map):
-    return aia171_test_map.submap((30, 60)*u.pix, (50, 85)*u.pix)
+    return aia171_test_map.submap((30, 60)*u.pix, top_right=(50, 85)*u.pix)
 
 
 @pytest.fixture
 def straddles_limb_map(aia171_test_map):
-    return aia171_test_map.submap((64, 80)*u.pix, (120, 127)*u.pix)
+    return aia171_test_map.submap((64, 80)*u.pix, top_right=(120, 127)*u.pix)
 
 
 @pytest.fixture
@@ -79,9 +75,9 @@ def aia171_test_map_with_mask(aia171_test_map):
 
 @pytest.fixture
 def aia171_test_submap(aia171_test_map):
-    bl = SkyCoord(-512 * u.arcsec,  100 * u.arcsec, frame=aia171_test_map.coordinate_frame)
+    bl = SkyCoord(-512 * u.arcsec, 100 * u.arcsec, frame=aia171_test_map.coordinate_frame)
     ur = SkyCoord(-100 * u.arcsec, 400 * u.arcsec, frame=aia171_test_map.coordinate_frame)
-    return aia171_test_map.submap(bl, ur)
+    return aia171_test_map.submap(bl, top_right=ur)
 
 
 @pytest.fixture
@@ -96,7 +92,7 @@ def test_single(seconds_per_day):
 
 def test_array(seconds_per_day):
     rot = diff_rot(10 * seconds_per_day, np.linspace(-70, 70, 2) * u.deg)
-    assert_quantity_allclose(rot, Longitude(np.array([110.2725,  110.2725]) * u.deg), rtol=1e-3)
+    assert_quantity_allclose(rot, Longitude(np.array([110.2725, 110.2725]) * u.deg), rtol=1e-3)
 
 
 def test_synodic(seconds_per_day):
@@ -124,6 +120,11 @@ def test_snodgrass(seconds_per_day):
     assert_quantity_allclose(rot, 135.4232 * u.deg, rtol=1e-3)
 
 
+def test_rigid(seconds_per_day):
+    rot = diff_rot(10 * seconds_per_day, [0, 30, 60] * u.deg, rot_type='rigid')
+    assert_quantity_allclose(rot, [141.844 * u.deg] * 3, rtol=1e-3)
+
+
 def test_fail(seconds_per_day):
     with pytest.raises(ValueError):
         rot = diff_rot(10 * seconds_per_day, 30 * u.deg, rot_type='garbage')
@@ -133,7 +134,8 @@ def test_solar_rotate_coordinate():
     # Testing along the Sun-Earth line, observer is on the Earth
     obs_time = '2010-09-10 12:34:56'
     observer = get_earth(obs_time)
-    c = SkyCoord(-570*u.arcsec, 120*u.arcsec, obstime=obs_time, observer=observer, frame=frames.Helioprojective)
+    c = SkyCoord(-570*u.arcsec, 120*u.arcsec, obstime=obs_time,
+                 observer=observer, frame=frames.Helioprojective)
     new_time = '2010-09-11 12:34:56'
     new_observer = get_earth(new_time)
 
@@ -163,50 +165,130 @@ def test_solar_rotate_coordinate():
         assert isinstance(d, SkyCoord)
 
         # Test the coordinate
-        np.testing.assert_almost_equal(d.Tx.to(u.arcsec).value, -371.8885208634674, decimal=1)
-        np.testing.assert_almost_equal(d.Ty.to(u.arcsec).value, 105.35006656251727, decimal=1)
-        np.testing.assert_allclose(d.distance.to(u.km).value, 1.499642e+08, rtol=1e-5)
+        np.testing.assert_almost_equal(d.Tx.to(u.arcsec).value, -386.4519332773052, decimal=1)
+        np.testing.assert_almost_equal(d.Ty.to(u.arcsec).value, 106.1647811048218, decimal=1)
+        np.testing.assert_allclose(d.distance.to(u.km).value, 1.499689e+08, rtol=1e-5)
 
         # Test that the SkyCoordinate is Helioprojective
         assert isinstance(d.frame, frames.Helioprojective)
 
 
-def test_differential_rotate(aia171_test_map, all_off_disk_map, all_on_disk_map, straddles_limb_map):
+def test_consistency_with_rotatedsunframe():
+    old_observer = frames.HeliographicStonyhurst(10*u.deg, 20*u.deg, 1*u.AU, obstime='2001-01-01')
+    new_observer = frames.HeliographicStonyhurst(30*u.deg, 40*u.deg, 2*u.AU, obstime='2001-01-08')
 
+    hpc_coord = SkyCoord(100*u.arcsec, 200*u.arcsec, frame='helioprojective',
+                         observer=old_observer, obstime=old_observer.obstime)
+
+    # Perform the differential rotation using solar_rotate_coordinate()
+    result1 = solar_rotate_coordinate(hpc_coord, observer=new_observer)
+
+    # Perform the differential rotation using RotatedSunFrame, with translational motion of the Sun
+    # ignored using transform_with_sun_center()
+    rsf_coord = RotatedSunFrame(base=hpc_coord, rotated_time=new_observer.obstime)
+    with transform_with_sun_center():
+        result2 = rsf_coord.transform_to(result1.replicate_without_data())
+
+    assert_quantity_allclose(result1.Tx, result2.Tx)
+    assert_quantity_allclose(result1.Ty, result2.Ty)
+    assert_quantity_allclose(result1.distance, result2.distance)
+
+
+# Testing using observer inputs
+def test_differential_rotate_observer_all_off_disk(all_off_disk_map):
     # Test a map that is entirely off the disk of the Sun
     # Should report an error
     with pytest.raises(ValueError):
-        dmap = differential_rotate(all_off_disk_map)
+        differential_rotate(all_off_disk_map)
 
+
+def test_differential_rotate_observer_full_disk(aia171_test_map):
     # Test a full disk map
     new_observer = get_earth(aia171_test_map.date + 6*u.hr)
     dmap = differential_rotate(aia171_test_map, observer=new_observer)
     assert dmap.data.shape == aia171_test_map.data.shape
+    assert dmap.date.isot == new_observer.obstime.isot
+    assert dmap.heliographic_latitude == new_observer.lat
+    assert dmap.heliographic_longitude == new_observer.lon
 
+
+def test_differential_rotate_observer_all_on_disk(all_on_disk_map):
     # Test a map that is entirely on disk - triggers sub full disk branches
     # Rotated map should have a smaller extent in the x - direction
     new_observer = get_earth(all_on_disk_map.date - 48*u.hr)
     dmap = differential_rotate(all_on_disk_map, observer=new_observer)
     assert dmap.data.shape[1] < all_on_disk_map.data.shape[1]
-
     # This rotated map should have a larger extent in the x direction
     new_observer = get_earth(all_on_disk_map.date + 48*u.hr)
     dmap = differential_rotate(all_on_disk_map, observer=new_observer)
     assert dmap.data.shape[1] > all_on_disk_map.data.shape[1]
+    assert dmap.date.isot == new_observer.obstime.isot
+    assert dmap.heliographic_latitude == new_observer.lat
+    assert dmap.heliographic_longitude == new_observer.lon
 
+
+def test_differential_rotate_observer_straddles_limb(straddles_limb_map):
     # Test a map that straddles the limb - triggers sub full disk branches
     # Rotated map should have a smaller extent in the x - direction
     new_observer = get_earth(straddles_limb_map.date + 48*u.hr)
-    # Ignore some invalid NaN comparisions within astropy
+    # Ignore some invalid NaN comparisons within astropy
     # (fixed in astropy 4.0.1 https://github.com/astropy/astropy/pull/9843)
     with np.errstate(invalid='ignore'):
         dmap = differential_rotate(straddles_limb_map, observer=new_observer)
     assert dmap.data.shape[1] < straddles_limb_map.data.shape[1]
-
     # The output map should have the positional properties of the observer
-    assert dmap.date == new_observer.obstime
+    assert dmap.date.isot == new_observer.obstime.isot
     assert dmap.heliographic_latitude == new_observer.lat
     assert dmap.heliographic_longitude == new_observer.lon
+
+
+# ----- Testing with time input -----
+def test_differential_rotate_time_full_disk(aia171_test_map):
+    # Test a full disk map
+    new_time = aia171_test_map.date + 6*u.hr
+    with pytest.warns(UserWarning, match="Using 'time' assumes an Earth-based observer"):
+        dmap = differential_rotate(aia171_test_map, time=new_time)
+    assert dmap.data.shape == aia171_test_map.data.shape
+    # The output map should have the same time as the new time now.
+    assert dmap.date.isot == new_time.isot
+
+
+def test_differential_rotate_time_all_on_disk(all_on_disk_map):
+    # Test a map that is entirely on disk - triggers sub full disk branches
+    # Rotated map should have a smaller extent in the x - direction
+    new_time = all_on_disk_map.date - 48*u.hr
+    with pytest.warns(UserWarning, match="Using 'time' assumes an Earth-based observer"):
+        dmap = differential_rotate(all_on_disk_map, time=new_time)
+    assert dmap.data.shape[1] < all_on_disk_map.data.shape[1]
+    # This rotated map should have a larger extent in the x direction
+    new_time = all_on_disk_map.date + 48*u.hr
+    with pytest.warns(UserWarning, match="Using 'time' assumes an Earth-based observer"):
+        dmap = differential_rotate(all_on_disk_map, time=new_time)
+    assert dmap.data.shape[1] > all_on_disk_map.data.shape[1]
+    # The output map should have the same time as the new time now.
+    assert dmap.date.isot == new_time.isot
+
+
+def test_differential_rotate_time_straddles_limb(straddles_limb_map):
+    # Test a map that straddles the limb - triggers sub full disk branches
+    # Rotated map should have a smaller extent in the x - direction
+    new_time = straddles_limb_map.date + 48*u.hr
+    # Ignore some invalid NaN comparisons within astropy
+    # (fixed in astropy 4.0.1 https://github.com/astropy/astropy/pull/9843)
+    with np.errstate(invalid='ignore'):
+        with pytest.warns(UserWarning, match="Using 'time' assumes an Earth-based observer"):
+            dmap = differential_rotate(straddles_limb_map, time=new_time)
+    assert dmap.data.shape[1] < straddles_limb_map.data.shape[1]
+    # The output map should have the same time as the new time now.
+    assert dmap.date.isot == new_time.isot
+
+
+def test_differential_rotate_time_off_disk(all_off_disk_map):
+    # Test a map that is entirely off the disk of the Sun
+    # Should report an error
+    new_time = all_off_disk_map.date + 48*u.hr
+    with pytest.raises(ValueError):
+        differential_rotate(all_off_disk_map, time=new_time)
 
 
 # Tests of the helper functions
@@ -288,7 +370,7 @@ def test_rotate_submap_edge(aia171_test_map, all_off_disk_map, all_on_disk_map, 
     for this_edge in (1, 2):  # Bottom and left edges do move
         pixels = edges[this_edge]
         res = _rotate_submap_edge(straddles_limb_map, pixels, observer)
-        # Ignore some invalid NaN comparisions within astropy
+        # Ignore some invalid NaN comparisons within astropy
         # (fixed in astropy 4.0.1 https://github.com/astropy/astropy/pull/9843)
         with np.errstate(invalid='ignore'):
             assert all(res.Tx != (straddles_limb_map.pixel_to_world(pixels[:, 0], pixels[:, 1])).Tx)
@@ -296,10 +378,11 @@ def test_rotate_submap_edge(aia171_test_map, all_off_disk_map, all_on_disk_map, 
 
 
 def test_get_extreme_position():
-    # Ignore some invalid NaN comparisions within astropy
+    # Ignore some invalid NaN comparisons within astropy
     # (fixed in astropy 4.0.1 https://github.com/astropy/astropy/pull/9843)
     with np.errstate(invalid='ignore'):
-        coords = SkyCoord([-1, 0, 1, np.nan]*u.arcsec, [-2, 0, 2, -np.nan]*u.arcsec, frame=frames.Helioprojective)
+        coords = SkyCoord([-1, 0, 1, np.nan]*u.arcsec, [-2, 0, 2, -np.nan]
+                          * u.arcsec, frame=frames.Helioprojective)
 
     with pytest.warns(RuntimeWarning, match='All-NaN axis encountered'):
         assert _get_extreme_position(coords, 'Tx', operator=np.nanmin) == -1

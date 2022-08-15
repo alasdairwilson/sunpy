@@ -4,7 +4,6 @@ source.
 """
 from collections import OrderedDict
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas
@@ -49,16 +48,51 @@ class NoRHTimeSeries(GenericTimeSeries):
     * `Analysis Manual <https://solar.nro.nao.ac.jp/norh/doc/manuale/index.html>`_
     * `Nobeyama Correlation Plots <https://solar.nro.nao.ac.jp/norh/html/cor_plot/>`_
     """
-    # Class attribute used to specify the source class of the TimeSeries.
+    # Class attributes used to specify the source class of the TimeSeries
+    # and a URL to the mission website.
     _source = 'norh'
+    _url = "https://solar.nro.nao.ac.jp/norh/"
 
     def __init__(self, data, header, units, **kwargs):
         super().__init__(data, header, units, **kwargs)
 
-    @peek_show
-    def peek(self, **kwargs):
+    def plot(self, axes=None, columns=None, **kwargs):
         """
-        Plot the NoRH lightcurve TimeSeries.
+        Plot the NoRH lightcurve.
+
+        Parameters
+        ----------
+        axes : `matplotlib.axes.Axes`, optional
+            The axes on which to plot the TimeSeries. Defaults to current axes.
+        columns : list[str], optional
+            Unused, but there to maintain uniformity among plot methods.
+        **kwargs : `dict`
+            Additional plot keyword arguments that are handed to `~matplotlib.axes.Axes.plot`
+            functions.
+
+        Returns
+        -------
+        `~matplotlib.axes.Axes`
+            The plot axes.
+        """
+        axes, columns = self._setup_axes_columns(axes, columns)
+
+        plt.xticks(rotation=30)
+        data_lab = str(self.meta.get('OBS-FREQ').values()).replace('[', '').replace(
+            ']', '').replace('\'', '')
+        axes.plot(self.to_dataframe(), label=data_lab, **kwargs)
+        axes.set_yscale("log")
+        axes.set_ylim(1e-4, 1)
+        axes.set_ylabel('Correlation')
+        axes.legend()
+        self._setup_x_axis(axes)
+        return axes
+
+    @peek_show
+    def peek(self, title="Nobeyama Radioheliograph", columns=None, **kwargs):
+        """
+        Displays the NoRH lightcurve TimeSeries by calling
+        `~sunpy.timeseries.sources.norh.NoRHTimeSeries.plot`.
 
         .. plot::
 
@@ -69,25 +103,18 @@ class NoRHTimeSeries(GenericTimeSeries):
 
         Parameters
         ----------
+        title : `str`, optional
+            The title of the plot. Defaults to "Nobeyama Radioheliograph".
+        columns : list[str], optional
+            Unused, but there to maintain uniformity among peek methods.
         **kwargs : `dict`
-            Additional plot keyword arguments that are handed to `axes.plot` functions
+            Additional plot keyword arguments that are handed to `~matplotlib.axes.Axes.plot`
+            functions.
         """
-        # Check we have a timeseries valid for plotting
-        self._validate_data_for_plotting()
-
-        figure = plt.figure()
-        axes = plt.gca()
-        data_lab = str(self.meta.get('OBS-FREQ').values()).replace('[', '').replace(
-            ']', '').replace('\'', '')
-        axes.plot(self.to_dataframe().index, self.to_dataframe(), label=data_lab, **kwargs)
-        axes.set_yscale("log")
-        axes.set_ylim(1e-4, 1)
-        axes.set_title('Nobeyama Radioheliograph')
-        axes.set_xlabel('Start time: ' + self.to_dataframe().index[0].strftime(TIME_FORMAT))
-        axes.set_ylabel('Correlation')
-        axes.legend()
-
-        return figure
+        fig, ax = plt.subplots()
+        axes = self.plot(axes=ax, **kwargs)
+        axes.set_title(title)
+        return fig
 
     @classmethod
     def _parse_file(cls, filepath):
@@ -121,7 +148,7 @@ class NoRHTimeSeries(GenericTimeSeries):
         # the FITS header
         obs_start_time = parse_time(header['DATE-OBS'] + 'T' + header['CRVAL1'])
         length = len(data)
-        cadence = np.float(header['CDELT1'])
+        cadence = float(header['CDELT1'])
         sec_array = np.linspace(0, length - 1, int(length / cadence))
 
         norh_time = obs_start_time + TimeDelta(sec_array*u.second)

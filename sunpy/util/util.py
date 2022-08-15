@@ -2,12 +2,17 @@
 This module provides general utility functions.
 """
 import os
-from itertools import chain, count
 import hashlib
+import inspect
+from io import BytesIO
+from base64 import b64encode
+from shutil import get_terminal_size
+from itertools import chain, count
 from collections import UserList
 
 __all__ = ['unique', 'replacement_filename', 'expand_list',
-           'expand_list_generator', 'dict_keys_same', 'hash_file']
+           'expand_list_generator', 'dict_keys_same', 'hash_file', 'get_width',
+           'get_keywords', 'get_set_methods']
 
 
 def unique(itr, key=None):
@@ -40,7 +45,7 @@ def unique(itr, key=None):
                 items.add(x)
 
 
-def replacement_filename(path):
+def replacement_filename(path: str):
     """
     Return a replacement path if input path is currently in use.
 
@@ -110,9 +115,9 @@ def partial_key_match(key, dictionary):
     Parameters
     ----------
     key : `tuple`
-          A tuple containing the partial key.
-    dictionary: `dict`
-          The target dictionary from which we want to retrieve the value based on the partial key.
+        A tuple containing the partial key.
+    dictionary : `dict`
+        The target dictionary from which we want to retrieve the value based on the partial key.
 
     Yields
     ------
@@ -124,7 +129,7 @@ def partial_key_match(key, dictionary):
     * https://stackoverflow.com/questions/18893624/partial-match-dictionary-keyof-tuples-in-python
 
     Examples
-    ----------
+    --------
     >>> d = {('abc','def','ghi') : 1, ('abc', 'def', 'xyz') : 2, ('pqr', 'lmn', 'tuv') : 3}
     >>> list(partial_key_match(('abc', 'def', None), d))
         [1, 2]
@@ -155,7 +160,7 @@ def dict_keys_same(list_of_dicts):
     * https://stackoverflow.com/questions/10482439/make-sure-all-dicts-in-a-list-have-the-same-keys
 
     Examples
-    ----------
+    --------
     >>> l = [{'x': 42}, {'x': 23, 'y': 5}]
     >>> dict_keys_same(l)
         [{'x': 42, 'y': None}, {'x': 23, 'y': 5}]
@@ -172,7 +177,7 @@ def hash_file(path):
 
     Parameters
     ----------
-    path: `str`
+    path : `str`
         The path of the file to be hashed.
 
     Returns
@@ -195,3 +200,83 @@ def hash_file(path):
             sha256.update(data)
 
     return sha256.hexdigest()
+
+
+def get_width():
+    """
+    Gets the width of the current terminal.
+    Accounts for if the 'COLUMNS' environmental variable is set.
+
+    Returns
+    -------
+    `int`
+        Width of the terminal you are in.
+        Works for IPython notebooks and normal terminals.
+    """
+    width = os.environ.get("COLUMNS", None)
+    if width:
+        width = int(width)
+    else:
+        width, _ = get_terminal_size()
+    return width
+
+
+def get_keywords(func):
+    """
+    Returns a set of keyword names from ``func``'s signature.
+    Recursive if ``func`` is a list of functions and methods.
+
+    Parameters
+    ----------
+    func : function or method or `list`
+        Function or method (or list of those) to extract a
+        set of accepted keyword arguments for.
+
+    Returns
+    -------
+    keywords : `set`
+        A set of accepted keyword arguments.
+    """
+    if isinstance(func, list):
+        keywords = set()
+        for f in func:
+            keywords.update(get_keywords(f))
+        return keywords
+    sig = inspect.signature(func)
+    keywords = {param.name for param in sig.parameters.values()
+                if param.default is not inspect.Parameter.empty}
+    return keywords
+
+
+def get_set_methods(obj):
+    """
+    Returns a set of keyword names that can be handled by
+    an object's ``set_...`` methods.
+
+    Parameters
+    ----------
+    obj : `object`
+        Matplotlib object such as `~matplotlib.image.AxesImage`
+        to extract handled keyword arguments for.
+
+    Returns
+    -------
+    keywords : `set`
+        A set of accepted keyword arguments.
+
+    Notes
+    -----
+    See :meth:`matplotlib.artist.Artist.update` for an example
+    of Matplotlib relying on this capability.
+    """
+    return {
+        m[4:] for m in dir(obj)
+        if m.startswith('set_') and callable(getattr(obj, m, None))
+    }
+
+
+def _figure_to_base64(fig):
+    # Converts a matplotlib Figure to a base64 UTF-8 string
+    buf = BytesIO()
+    fig.savefig(buf, format='png', facecolor='none')  # works better than transparent=True
+    return b64encode(buf.getvalue()).decode('utf-8')

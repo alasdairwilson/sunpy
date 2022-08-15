@@ -19,10 +19,11 @@ import matplotlib.pyplot as plt
 from astroquery.vizier import Vizier
 
 import astropy.units as u
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import Distance, SkyCoord
+from astropy.time import Time
 
 import sunpy.map
-from sunpy.coordinates import frames, get_body_heliographic_stonyhurst
+from sunpy.coordinates import get_body_heliographic_stonyhurst
 from sunpy.net import helioviewer
 
 ###############################################################################
@@ -35,22 +36,22 @@ f = hv.download_jp2('2014/05/15 07:54', observatory='STEREO_A',
 cor2 = sunpy.map.Map(f)
 
 ###############################################################################
-# To efficiently search the star field we need to know what stars are near the
+# To efficiently search the star field, we need to know what stars are near the
 # Sun as observed by STEREO. We need the vector that points from STEREO to the Sun.
-# By converting to HCRS we get the vector from the Sun to STEREO
+# The location of STEREO in HCRS provides the Sun-to-STEREO vector.
 
 sun_to_stereo = cor2.observer_coordinate.transform_to('hcrs')
 
 ###############################################################################
 # We next reflect the vector to get our search vector which points from STEREO
-# to the Sun
+# to the Sun.
 
-stereo_to_sun = SkyCoord(-sun_to_stereo.data, obstime=sun_to_stereo.obstime, frame='hcrs')
+stereo_to_sun = SkyCoord(-sun_to_stereo.spherical, obstime=sun_to_stereo.obstime, frame='hcrs')
 
 ###############################################################################
 # Let's look up bright stars using the Vizier search capability provided by
-# astroquery (note that this is not a required package of SunPy so you will likely
-# need to install it). We will search the GAIA2 star catalog for stars with magnitude
+# astroquery.
+# We will search the GAIA2 star catalog for stars with magnitude
 # brighter than 7.
 
 vv = Vizier(columns=['**'], row_limit=-1, column_filters={'Gmag': '<7'}, timeout=1200)
@@ -63,27 +64,31 @@ result = vv.query_region(stereo_to_sun, radius=4 * u.deg, catalog='I/345/gaia2')
 print(len(result[0]))
 
 ###############################################################################
-# Now we load each star into a coordinate and transform it into the COR2
-# image coordinates. Since we don't know the distance to each of these stars
-# we will just put them very far away.
+# Now we load all stars into an array coordinate.  The reference epoch for the
+# star positions is J2015.5, # so we update these positions to the date of the
+# COR2 observation using :meth:`astropy.coordinates.SkyCoord.apply_space_motion`.
 
-hpc_coords = []
-for this_object in result[0]:
-    tbl_crds = SkyCoord(this_object['RA_ICRS'] * u.deg, this_object['DE_ICRS'] * u.deg,
-                        1e12 * u.km, frame='icrs', obstime=cor2.date)
-    hpc_coords.append(tbl_crds.transform_to(cor2.coordinate_frame))
+tbl_crds = SkyCoord(ra=result[0]['RA_ICRS'],
+                    dec=result[0]['DE_ICRS'],
+                    distance=Distance(parallax=u.Quantity(result[0]['Plx'])),
+                    pm_ra_cosdec=result[0]['pmRA'],
+                    pm_dec=result[0]['pmDE'],
+                    radial_velocity=result[0]['RV'],
+                    frame='icrs',
+                    obstime=Time(result[0]['Epoch'], format='jyear'))
+tbl_crds = tbl_crds.apply_space_motion(new_obstime=cor2.date)
 
 ###############################################################################
-# One of the bright features is actually Mars so let's also get that coordinate.
-# get the location of Mars.
+# One of the bright features is actually Mars, so let's also get that coordinate.
 
 mars = get_body_heliographic_stonyhurst('mars', cor2.date, observer=cor2.observer_coordinate)
-mars_hpc = mars.transform_to(frames.Helioprojective(observer=cor2.observer_coordinate))
 
 ###############################################################################
-# Let's plot the results.
+# Let's plot the results.  The coordinates will be transformed automatically
+# when plotted using :meth:`~astropy.visualization.wcsaxes.WCSAxes.plot_coord`.
 
-ax = plt.subplot(projection=cor2)
+fig = plt.figure()
+ax = fig.add_subplot(projection=cor2)
 
 # Let's tweak the axis to show in degrees instead of arcsec
 lon, lat = ax.coords
@@ -91,12 +96,12 @@ lon.set_major_formatter('d.dd')
 lat.set_major_formatter('d.dd')
 
 cor2.plot(axes=ax, vmin=0, vmax=600)
-cor2.draw_limb()
+cor2.draw_limb(axes=ax)
 
 # Plot the position of Mars
-ax.plot_coord(mars_hpc, 's', color='white', fillstyle='none', markersize=12, label='Mars')
+ax.plot_coord(mars, 's', color='white', fillstyle='none', markersize=12, label='Mars')
 # Plot all of the stars
-for this_coord in hpc_coords:
-    ax.plot_coord(this_coord, 'o', color='white', fillstyle='none')
-plt.legend()
+ax.plot_coord(tbl_crds, 'o', color='white', fillstyle='none')
+ax.legend()
+
 plt.show()

@@ -1,10 +1,11 @@
-from astropy.visualization.mpl_normalize import ImageNormalize
-from astropy.visualization import PowerStretch
 import astropy.units as u
+from astropy.coordinates import SkyCoord
+from astropy.visualization import PowerStretch
+from astropy.visualization.mpl_normalize import ImageNormalize
 
+from sunpy.coordinates import sun
 from sunpy.map import GenericMap
 from sunpy.map.sources.source_type import source_stretch
-from sunpy.coordinates import sun
 
 __all__ = ['KCorMap']
 
@@ -29,35 +30,45 @@ class KCorMap(GenericMap):
     """
 
     def __init__(self, data, header, **kwargs):
-
         super().__init__(data, header, **kwargs)
 
-        # Fill in some missing info
-        self.meta['observatory'] = 'MLSO'
-        self.meta['detector'] = 'KCor'
-        self.meta['waveunit'] = 'nanometer'
-        # Since KCor is on Earth, no need to raise the warning in mapbase
-        self.meta['dsun_obs'] = (sun.earth_distance(self.date)).to(u.m).value
-        self.meta['hgln_obs'] = 0.0
         self._nickname = self.detector
 
         self.plot_settings['cmap'] = self._get_cmap_name()
-        self.plot_settings['norm'] = ImageNormalize(stretch=source_stretch(self.meta, PowerStretch(0.25)), clip=False)
+        self.plot_settings['norm'] = ImageNormalize(
+            stretch=source_stretch(self.meta, PowerStretch(0.25)), clip=False)
         # Negative value pixels can appear that lead to ugly looking images.
         # This can be fixed by setting the lower limit of the normalization.
         self.plot_settings['norm'].vmin = 0.0
 
     def _get_cmap_name(self):
         """Build the default color map name."""
-        cmap_string = self.meta['detector']
-        return cmap_string.lower()
+        return self.detector.lower()
 
     @property
     def observatory(self):
+        return "MLSO"
+
+    @property
+    def detector(self):
+        return "KCor"
+
+    @property
+    def waveunit(self):
         """
-        Returns the observatory.
+        If the WAVEUNIT FITS keyword is not present, defaults to nanometers.
         """
-        return self.meta['observatory']
+        unit = self.meta.get("waveunit", "nm")
+        return u.Unit(unit)
+
+    @property
+    def _default_observer_coordinate(self):
+        # Override missing metadata in the observer coordinate
+        dsun_obs = self.meta.get('dsun_obs', sun.earth_distance(self.date).to_value(u.m))
+        return SkyCoord(self.meta.get('hgln_obs', 0.0) * u.deg,
+                        self.meta.get('hglt_obs', 0.0) * u.deg,
+                        self.meta.get('dsun_obs', dsun_obs) * u.m,
+                        frame="heliographic_stonyhurst")
 
     @classmethod
     def is_datasource_for(cls, data, header, **kwargs):

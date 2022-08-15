@@ -4,19 +4,16 @@ from "simple" web sources such as HTTP or FTP servers. Although it could be
 used for more complex services as well. Following the example of `sunpy.map`
 and `sunpy.timeseries` this module provides a base class
 `~sunpy.net.dataretriever.GenericClient` from which specific services can
-subclass. All these subclasses are then registered with the `Fido <sunpy.net.fido_factory.UnifiedDownloaderFactory>` factory
+subclass. All these subclasses are then registered with the `sunpy.net.Fido` factory
 class, so do not need to be called individually.
 """
 
-from .client import QueryResponseBlock, QueryResponse, GenericClient
-from .sources.eve import EVEClient
-from .sources.lyra import LYRAClient
-from .sources.goes import XRSClient, SUVIClient
-from .sources.norh import NoRHClient
-from .sources.rhessi import RHESSIClient
-from .sources.noaa import NOAAIndicesClient, NOAAPredictClient, SRSClient
-from .sources.fermi_gbm import GBMClient
-
-__all__ = ['QueryResponseBlock', 'QueryResponse', 'GenericClient',
-           'EVEClient', 'XRSClient', 'SUVIClient', 'LYRAClient', 'NOAAIndicesClient',
-           'NOAAPredictClient', 'NoRHClient', 'RHESSIClient', 'SRSClient', 'GBMClient']
+from .client import *
+from .sources.eve import *
+from .sources.fermi_gbm import *
+from .sources.goes import *
+from .sources.gong import *
+from .sources.lyra import *
+from .sources.noaa import *
+from .sources.norh import *
+from .sources.rhessi import *

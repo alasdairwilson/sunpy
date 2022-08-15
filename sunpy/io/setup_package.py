@@ -1,15 +1,15 @@
 import os
 from glob import glob
 from collections import defaultdict
-from distutils.core import Extension
 
 import numpy
 from extension_helpers import get_compiler
+from setuptools import Extension
 
 
 def get_extensions():
 
-    if get_compiler() == 'msvc':
+    if get_compiler() == 'msvc' or os.environ.get("SUNPY_NO_BUILD_ANA_EXTENSION", None):
         return list()
     else:
         cfg = defaultdict(list)
@@ -23,5 +23,5 @@ def get_extensions():
                                           '-Wno-unused-result',
                                           '-Wno-sign-compare'])
 
-        e = Extension('sunpy.io._pyana', **cfg)
+        e = Extension('sunpy.io._pyana', py_limited_api=True, **cfg)
         return [e]

@@ -1,9 +1,10 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
 import astropy.units as u
 from astropy.time import Time, TimeDelta
+from astropy.utils.exceptions import ErfaWarning
 
 import sunpy.time
 from sunpy.time import is_time_equal
@@ -119,7 +120,7 @@ def test_get_dates():
     (tbegin_str, TimeDelta(1*u.day)),
     (tbegin_str, timedelta(days=1)),
     (sunpy.time.TimeRange(tbegin_str, tfin_str))
-    ])
+])
 def test_timerange_input(ainput):
     timerange = sunpy.time.TimeRange(ainput)
     assert isinstance(timerange, sunpy.time.TimeRange)
@@ -132,7 +133,7 @@ def test_timerange_input(ainput):
     (tbegin_str, tfin_str),
     (tfin_str, -dt),
     (tfin_str, tbegin_str)
-    ])
+])
 def test_start_lessthan_end(ainput):
     timerange = sunpy.time.TimeRange(ainput)
     t1 = timerange.start
@@ -156,7 +157,8 @@ def test_split(timerange_a):
               sunpy.time.TimeRange('2012/1/1T12:00:00', '2012/1/2T00:00:00')]
     split = timerange_a.split(n=2)
     # Doing direct comparisons seem to not work
-    assert all([is_time_equal(wi.start, ex.start) and is_time_equal(wi.end, ex.end) for wi, ex in zip(split, expect)])
+    assert all([is_time_equal(wi.start, ex.start) and is_time_equal(wi.end, ex.end)
+                for wi, ex in zip(split, expect)])
 
 
 def test_split_n_0_error(timerange_a):
@@ -258,6 +260,35 @@ def test_contains(timerange_a):
     assert timerange.end in timerange
     assert '2014/05/04 15:21' in timerange
     assert '1975/4/13' not in timerange
-    assert '2100/1/1'not in timerange
+    with pytest.warns(ErfaWarning, match='dubious year'):
+        assert '2100/1/1'not in timerange
     assert '2014/05/03 12:00' in timerange
     assert '2014/05/05 21:00' in timerange
+
+
+def test_get_dates_daylist_less_24_hours():
+    starttime = datetime(2020, 1, 1, 12)
+    endtime = datetime(2020, 1, 2, 11)
+    interval = sunpy.time.TimeRange(starttime, endtime)
+    daylist = interval.get_dates()
+    day_one = Time("2020-01-01T00:00:00.000")
+    day_two = Time("2020-01-02T00:00:00.000")
+    assert len(daylist) == 2
+    assert daylist[0] == day_one
+    assert daylist[1] == day_two
+
+
+def test_intersects():
+    tr1 = sunpy.time.TimeRange('2020-01-01', '2020-01-02')
+    tr2 = sunpy.time.TimeRange('2020-01-03', '2020-01-04')
+    assert not tr1.intersects(tr2)
+    assert not tr2.intersects(tr1)
+
+    # Check interval edges intersect
+    tr2 = sunpy.time.TimeRange('2020-01-02', '2020-01-04')
+    assert tr1.intersects(tr2)
+    assert tr2.intersects(tr1)
+
+    tr2 = sunpy.time.TimeRange('2020-01-01', '2020-01-04')
+    assert tr1.intersects(tr2)
+    assert tr2.intersects(tr1)

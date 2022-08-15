@@ -6,14 +6,15 @@
 from datetime import datetime
 
 import pytest
+
 import astropy.units as u
 
-from sunpy.database.database import Database
 from sunpy.database import tables
-from sunpy.database.attrs import walker, Starred, Tag, Path, DownloadTime,\
-    FitsHeaderEntry
-from sunpy.net.attr import DummyAttr, AttrAnd, AttrOr
-from sunpy.net import vso, attrs as a
+from sunpy.database.attrs import DownloadTime, FitsHeaderEntry, Path, Starred, Tag, walker
+from sunpy.database.database import Database
+from sunpy.net import attrs as a
+from sunpy.net import vso
+from sunpy.net.attr import AttrAnd, AttrOr, DummyAttr
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def vso_session():
     client = vso.VSOClient()
     qr = client.search(
         a.Time((2011, 9, 20, 1), (2011, 9, 20, 2)),
-        a.Instrument('RHESSI'))
+        a.Instrument.rhessi, response_format="legacy")
     entries = tables.entries_from_query_result(qr)
     database = Database('sqlite:///:memory:')
     for entry in entries:
@@ -403,8 +404,9 @@ def test_walker_create_fitsheader_inverted(session):
 
 
 @pytest.mark.remote_data
+@pytest.mark.skip
 def test_walker_create_vso_instrument(vso_session):
-    entries = walker.create(a.Instrument('RHESSI'), vso_session)
+    entries = walker.create(a.Instrument.rhessi, vso_session)
     expected = [tables.DatabaseEntry(id=1, source=u'RHESSI', provider=u'LSSP',
                                      physobs=u'intensity',
                                      fileid=u'/hessidata/2011/09/19/hsi_20110919_233340_002.fits',
@@ -446,6 +448,7 @@ def test_walker_create_vso_instrument(vso_session):
 
 
 @pytest.mark.remote_data
+@pytest.mark.skip
 def test_walker_create_wave(vso_session):
     entries = walker.create(a.Wavelength(0 * u.AA, 10 * u.AA), vso_session)
     assert len(entries) == 2
@@ -454,6 +457,7 @@ def test_walker_create_wave(vso_session):
 
 
 @pytest.mark.remote_data
+@pytest.mark.skip
 def test_walker_create_time(vso_session):
     time = a.Time(
         datetime(2011, 9, 17, 0, 0, 0), datetime(2011, 9, 20, 0, 0, 0))

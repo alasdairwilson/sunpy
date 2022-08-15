@@ -1,30 +1,20 @@
 """
 Test cases for KCor Map subclass.
 """
-
-import os
-import glob
-
 import pytest
 
 import astropy.units as u
 
+from sunpy.data.test import get_dummy_map_from_header, get_test_filepath
 from sunpy.map.sources.mlso import KCorMap
-from sunpy.map import Map
-import sunpy.data.test
-
-path = sunpy.data.test.rootdir
-fitspath = glob.glob(os.path.join(path, "20181209_180305_kcor_l1.5_rebinned.fits"))
 
 
 @pytest.fixture()
 def kcor():
-
     """Creates an KCorMap from a FITS file."""
-    return Map(fitspath)
+    return get_dummy_map_from_header(get_test_filepath("20181209_180305_kcor_l1.5_rebinned.header"))
 
 
-# KCor Tests
 def test_kcormap_creation(kcor):
     """Tests the creation of KCorMap using FITS."""
     assert isinstance(kcor, KCorMap)
@@ -49,4 +39,9 @@ def test_observatory(kcor):
 
 def test_norm_clip(kcor):
     # Tests that the default normalizer has clipping disabled
-    assert kcor.plot_settings['norm'].clip == False
+    assert not kcor.plot_settings['norm'].clip
+
+
+def test_wcs(kcor):
+    # Smoke test that WCS is valid and can transform from pixels to world coordinates
+    kcor.pixel_to_world(0*u.pix, 0*u.pix)

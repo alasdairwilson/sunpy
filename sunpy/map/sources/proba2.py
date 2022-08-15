@@ -1,5 +1,4 @@
 """PROBA2 Map subclass definitions"""
-#pylint: disable=W0221,W0222,E1101,E1121
 
 __author__ = "Keith Hughitt"
 __email__ = "keith.hughitt@nasa.gov"
@@ -27,17 +26,18 @@ class SWAPMap(GenericMap):
     """
 
     def __init__(self, data, header, **kwargs):
-
-        GenericMap.__init__(self, data, header, **kwargs)
-
-        # It needs to be verified that these must actually be set and
-        # are not already in the header.
-        self.meta['detector'] = "SWAP"
-#        self.meta['instrme'] = "SWAP"
-        self.meta['obsrvtry'] = "PROBA2"
+        super().__init__(data, header, **kwargs)
 
         self._nickname = self.detector
         self.plot_settings['cmap'] = 'sdoaia171'
+
+    @property
+    def observatory(self):
+        return "PROBA2"
+
+    @property
+    def detector(self):
+        return "SWAP"
 
     @classmethod
     def is_datasource_for(cls, data, header, **kwargs):

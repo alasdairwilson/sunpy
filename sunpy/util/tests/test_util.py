@@ -56,9 +56,50 @@ def test_expand_list_generator():
 
 def test_partial_key_match():
     test_dict = {('a', 'b', 'c'): (1, 2, 3), ('a', 'b', 'd'): (4, 5, 6), ('e', 'f', 'g'): (8, 7, 9)}
-    assert list(util.partial_key_match(('a', None, 'c'), test_dict))[0] == test_dict[('a', 'b', 'c')]
+    assert list(util.partial_key_match(('a', None, 'c'), test_dict))[
+        0] == test_dict[('a', 'b', 'c')]
 
 
 def test_dict_keys_same():
     dicts = [{'x': 42}, {'x': 23, 'y': 5}]
     assert util.dict_keys_same(dicts) == [{'y': None, 'x': 42}, {'y': 5, 'x': 23}]
+
+
+def test_get_keywords():
+
+    def f(a, b, c=1, d=2, **e):
+        pass
+
+    def g(a, b, *, c=1, h=2, **e):
+        pass
+
+    assert util.get_keywords(f) == {'c', 'd'}  # POSITIONAL_OR_KEYWORD
+    assert util.get_keywords(g) == {'c', 'h'}  # KEYWORD_ONLY
+    assert util.get_keywords([f, g]) == {'c', 'd', 'h'}
+
+
+def test_get_set_methods():
+
+    class A:
+
+        def _set_test1(self, *args, **kwargs):
+            pass
+
+        def set_test2(self, *args, **kwargs):
+            pass
+
+        @property
+        def set_test3(self):
+            pass
+
+        def test4(self, *args, **kwargs):
+            pass
+
+        @property
+        def test5(self, *args, **kwargs):
+            pass
+
+        def set_test6_n(self, *args, **kwargs):
+            pass
+
+    assert util.get_set_methods(A()) == {'test2', 'test6_n'}

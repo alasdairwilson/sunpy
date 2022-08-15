@@ -1,26 +1,28 @@
 import os
-import json
+import logging
 import pathlib
-import warnings
-import importlib
 import tempfile
+import importlib
 
 import pytest
 
 import astropy
 import astropy.config.paths
+import astropy.io.fits
+from astropy.utils import iers
 
-import sunpy.tests.helpers
-from sunpy.tests.hash import HASH_LIBRARY_NAME
-from sunpy.tests.helpers import new_hash_library, generate_figure_webpage
-from sunpy.util.exceptions import SunpyDeprecationWarning
+from sunpy.data.test import get_test_filepath, test_data_filenames, write_image_file_from_header_file
+from sunpy.map import Map
+from sunpy.util import SunpyUserWarning
 
 # Force MPL to use non-gui backends for testing.
 try:
     import matplotlib
+    import matplotlib.pyplot as plt
 except ImportError:
-    pass
+    HAVE_MATPLOTLIB = False
 else:
+    HAVE_MATPLOTLIB = True
     matplotlib.use('Agg')
 
 # Don't actually import pytest_remotedata because that can do things to the
@@ -28,17 +30,29 @@ else:
 remotedata_spec = importlib.util.find_spec("pytest_remotedata")
 HAVE_REMOTEDATA = remotedata_spec is not None
 
+
 # Do not collect the sample data file because this would download the sample data.
 collect_ignore = ["data/sample.py"]
 
-def pytest_addoption(parser):
-    parser.addoption("--figure_dir", action="store", default="./figure_test_images")
+
+console_logger = logging.getLogger()
+console_logger.setLevel('INFO')
+
+
+@pytest.fixture
+def jsoc_test_email():
+    return "nabil.freij@gmail.com"
 
 
 @pytest.fixture(scope='session', autouse=True)
-def figure_base_dir(request):
-    sunpy.tests.helpers.figure_base_dir = pathlib.Path(
-        request.config.getoption("--figure_dir"))
+def no_download_iers(request):
+    # Don't try and download IERS during tests
+    # See https://github.com/astropy/astropy/issues/12998 for issue that this
+    # sidesteps
+    old_value = iers.conf.auto_download
+    iers.conf.auto_download = False
+    yield
+    iers.conf.auto_download = old_value
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -55,6 +69,7 @@ def tmp_config_dir(request):
     yield
 
     del os.environ["SUNPY_CONFIGDIR"]
+    tmpdir.cleanup()
     astropy.config.paths.set_temp_config._temp_path = None
     astropy.config.paths.set_temp_cache._temp_path = None
 
@@ -66,9 +81,10 @@ def sunpy_cache(mocker, tmp_path):
     remote requests.
     """
     from types import MethodType
+
     from sunpy.data.data_manager.cache import Cache
-    from sunpy.data.data_manager.storage import InMemStorage
     from sunpy.data.data_manager.downloader import ParfiveDownloader
+    from sunpy.data.data_manager.storage import InMemStorage
     cache = Cache(
         ParfiveDownloader(),
         InMemStorage(),
@@ -102,6 +118,16 @@ def undo_config_dir_patch():
 
 
 @pytest.fixture(scope='session', autouse=True)
+def hide_parfive_progress(request):
+    """
+    Set the PARFIVE_HIDE_PROGESS to hide the parfive progress bar in tests.
+    """
+    os.environ["PARFIVE_HIDE_PROGESS"] = "True"
+    yield
+    del os.environ["PARFIVE_HIDE_PROGESS"]
+
+
+@pytest.fixture(scope='session', autouse=True)
 def tmp_dl_dir(request):
     """
     Globally set the default download directory for the test run to a tmp dir.
@@ -110,6 +136,15 @@ def tmp_dl_dir(request):
         os.environ["SUNPY_DOWNLOADDIR"] = tmpdir
         yield tmpdir
         del os.environ["SUNPY_DOWNLOADDIR"]
+
+
+@pytest.fixture(scope='session', autouse=True)
+def set_columns(request):
+    orig_columns = os.environ.get("COLUMNS", None)
+    os.environ['COLUMNS'] = '180'
+    yield
+    if orig_columns is not None:
+        os.environ['COLUMNS'] = orig_columns
 
 
 @pytest.fixture()
@@ -132,32 +167,47 @@ def pytest_runtest_setup(item):
         if 'remote_data' in item.keywords and not HAVE_REMOTEDATA:
             pytest.skip("skipping remotedata tests as pytest-remotedata is not installed")
 
-
-def pytest_unconfigure(config):
-    # If at least one figure test has been run, print result image directory
-    if len(new_hash_library) > 0:
-        # Write the new hash library in JSON
-        figure_base_dir = pathlib.Path(config.getoption("--figure_dir"))
-        hashfile = figure_base_dir / HASH_LIBRARY_NAME
-        with open(hashfile, 'w') as outfile:
-            json.dump(new_hash_library, outfile, sort_keys=True, indent=4, separators=(',', ': '))
-
-        """
-        Turn on internet when generating the figure comparison webpage.
-        """
-        if HAVE_REMOTEDATA:
-            from pytest_remotedata.disable_internet import turn_on_internet, turn_off_internet
-        else:
-            def turn_on_internet(): pass
-            def turn_off_internet(): pass
-
-        turn_on_internet()
-        generate_figure_webpage(new_hash_library)
-        turn_off_internet()
-
-        print('All images from image tests can be found in {}'.format(figure_base_dir.resolve()))
-        print("The corresponding hash library is {}".format(hashfile.resolve()))
+    # Confirm that the pyplot figure stack is empty before the test
+    if HAVE_MATPLOTLIB and plt.get_fignums():
+        raise SunpyUserWarning(f"There are stale pyplot figures prior to running {item.name}")
 
 
-def pytest_sessionstart(session):
-    warnings.simplefilter("error", SunpyDeprecationWarning)
+def pytest_runtest_teardown(item):
+    # Clear the pyplot figure stack if it is not empty after the test
+    # You can see these log messages by passing "-o log_cli=true" to pytest on the command line
+    if HAVE_MATPLOTLIB and plt.get_fignums():
+        console_logger.info(f"Removing {len(plt.get_fignums())} pyplot figure(s) "
+                            f"left open by {item.name}")
+        plt.close('all')
+
+
+@pytest.fixture(scope="session")
+def aia171_test_map():
+    return Map(get_test_filepath('aia_171_level1.fits'))
+
+
+@pytest.fixture(scope="session")
+def eit_fits_directory(tmp_path_factory):
+    # Create a temporary directory of dummy EIT FITS files
+    # from the header data. This directory is then used to
+    # test directory and glob patterns for the map factory
+    eit_dir = tmp_path_factory.mktemp('EIT')
+    eit_header_files = [f for f in test_data_filenames()
+                        if f.parents[0].relative_to(f.parents[1]).name == 'EIT_header'
+                        and f.suffix == '.header']
+    for f in eit_header_files:
+        _ = write_image_file_from_header_file(f, eit_dir)
+    return pathlib.Path(eit_dir)
+
+
+@pytest.fixture(scope="session")
+def waveunit_fits_directory(tmp_path_factory):
+    # Create a temporary directory of dummy FITS files
+    # from the header data. This directory is then used to
+    # test directory patterns for database
+    waveunit_dir = tmp_path_factory.mktemp('waveunit')
+    header_files = [f for f in test_data_filenames()
+                    if f.parents[0].relative_to(f.parents[1]).name == 'waveunit']
+    for f in header_files:
+        _ = write_image_file_from_header_file(f, waveunit_dir)
+    return pathlib.Path(waveunit_dir)

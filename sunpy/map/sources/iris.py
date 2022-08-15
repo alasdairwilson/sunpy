@@ -1,6 +1,7 @@
-import numpy as np
 
-from sunpy.map import GenericMap
+import astropy.units as u
+
+from sunpy.map.mapbase import GenericMap, SpatialPair
 
 __all__ = ['SJIMap']
 
@@ -25,31 +26,50 @@ class SJIMap(GenericMap):
 
     IRIS was launched into a Sun-synchronous orbit on 27 June 2013.
 
-    .. warning::
-
-        This object can only handle level 1 SJI files.
-
     References
     ----------
     * `IRIS Mission Page <https://iris.lmsal.com>`_
     * `IRIS Analysis Guide <https://iris.lmsal.com/itn26/itn26.pdf>`_
     * `IRIS Instrument Paper <https://doi.org/10.1007/s11207-014-0485-y>`_
     """
+    @property
+    def detector(self):
+        return "SJI"
 
-    def __init__(self, data, header, **kwargs):
-        # Assume pixel units are arcesc if not given
-        header['cunit1'] = header.get('cunit1', 'arcsec')
-        header['cunit2'] = header.get('cunit2', 'arcsec')
-        super().__init__(data, header, **kwargs)
+    @property
+    def spatial_units(self):
+        """
+        If not present in CUNIT{1,2} keywords, defaults to arcsec.
+        """
+        return SpatialPair(u.Unit(self.meta.get('cunit1', 'arcsec')),
+                           u.Unit(self.meta.get('cunit2', 'arcsec')))
 
-        self.meta['detector'] = "SJI"
-        self.meta['waveunit'] = "Angstrom"
-        self.meta['wavelnth'] = header['twave1']
+    @property
+    def waveunit(self):
+        """
+        Taken from WAVEUNIT, or if not present defaults to Angstrom.
+        """
+        return u.Unit(self.meta.get('waveunit', "Angstrom"))
+
+    @property
+    def wavelength(self):
+        """
+        Taken from WAVELNTH, or if not present TWAVE1.
+        """
+        return self.meta.get('wavelnth', self.meta.get('twave1')) * self.waveunit
+
+    @property
+    def unit(self):
+        unit_str = self.meta.get('bunit', None)
+        if unit_str is None:
+            return
+        # Remove "corrected" so that the unit can be parsed
+        unit_str = unit_str.lower().replace('corrected', '').strip()
+        return self._parse_fits_unit(unit_str)
 
     @classmethod
     def is_datasource_for(cls, data, header, **kwargs):
         """Determines if header corresponds to an IRIS SJI image"""
         tele = str(header.get('TELESCOP', '')).startswith('IRIS')
         obs = str(header.get('INSTRUME', '')).startswith('SJI')
-        level = header.get('lvl_num') == 1
         return tele and obs

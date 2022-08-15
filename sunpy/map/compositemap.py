@@ -2,22 +2,38 @@
 
 Author: `Keith Hughitt <keith.hughitt@nasa.gov>`
 """
-import numpy as np
-
-import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib.collections import Collection, QuadMesh
+from matplotlib.contour import ContourSet, QuadContourSet
+from matplotlib.image import AxesImage, _ImageBase
 
 import astropy.units as u
 
 from sunpy.map import GenericMap
-from sunpy.visualization import axis_labels_from_ctype, peek_show
-
-from sunpy.util import expand_list
+from sunpy.util import expand_list, get_keywords, get_set_methods
+from sunpy.util.decorators import add_common_docstring
+from sunpy.visualization import axis_labels_from_ctype, peek_show, wcsaxes_compat
 
 __all__ = ['CompositeMap']
 
 __author__ = "Keith Hughitt"
 __email__ = "keith.hughitt@nasa.gov"
+
+# Valid keyword arguments for each plotting method
+ACCEPTED_IMSHOW_KWARGS = get_keywords(
+    [GenericMap.plot, plt.Axes.imshow, AxesImage.__init__, _ImageBase.__init__]
+) | get_set_methods(AxesImage)
+
+ACCEPTED_PCOLORMESH_KWARGS = (get_keywords(
+    [GenericMap.plot, plt.Axes.pcolormesh, QuadMesh.__init__, Collection.__init__]
+) | get_set_methods(QuadMesh)) - {
+    'color', 'ec', 'edgecolor', 'facecolor', 'linestyle', 'linestyles',
+    'linewidth', 'linewidths', 'ls', 'lw'
+}
+
+ACCEPTED_CONTOUR_KWARGS = get_keywords(
+    [GenericMap.draw_contours, ContourSet.__init__, QuadContourSet._process_args]
+)
 
 
 class CompositeMap:
@@ -190,7 +206,6 @@ class CompositeMap:
         ----------
         index : `int`
             The index of the map in the composite map.
-
         alpha : `float`
             A float in the range 0 to 1.  Increasing values of alpha decrease
             the transparency of the layer (0 is complete transparency, 1
@@ -214,10 +229,8 @@ class CompositeMap:
         ----------
         index : `int`
             The index of the map in the composite map.
-
         levels : array-like
             The contour levels.
-
         percent : `bool`
             If True, the input 'levels' are interpreted as percentages relative
             to the maximum value of the data in layer 'index' of the composite
@@ -231,7 +244,7 @@ class CompositeMap:
         if percent is False:
             self._maps[index].levels = levels
         else:
-            self._maps[index].levels = [self._maps[index].max()*level/100.0 for level in levels]
+            self._maps[index].levels = u.Quantity(levels, u.percent)
 
     def set_plot_settings(self, index, plot_settings):
         """Sets the plot settings for a layer in the composite image.
@@ -240,7 +253,6 @@ class CompositeMap:
         ----------
         index : `int`
             The index of the map in the composite map.
-
         plot_settings : `dict`
             A dictionary of the form
 
@@ -260,7 +272,6 @@ class CompositeMap:
         ----------
         index : `int`
             The index of the map in the composite map.
-
         zorder : `int`
             The layer order.
 
@@ -279,7 +290,6 @@ class CompositeMap:
         ----------
         index : `int`
             Map index to use to plot limb.
-
         axes : `matplotlib.axes.Axes` or None
             Axes to plot limb on or None to use current axes.
 
@@ -310,12 +320,10 @@ class CompositeMap:
 
         Parameters
         ----------
-        index: int
+        index : int
             Index to determine which map to use to draw grid.
-
-        axes: `~matplotlib.axes.Axes` or None
+        axes : `~matplotlib.axes.Axes` or None
             Axes to plot limb on or None to use current axes.
-
         grid_spacing : `float`
             Spacing (in degrees) for longitude and latitude grid.
 
@@ -343,37 +351,68 @@ class CompositeMap:
         ax = self._maps[index].draw_grid(axes=axes, grid_spacing=grid_spacing, **kwargs)
         return ax
 
-    def plot(self, axes=None, annotate=True,  # pylint: disable=W0613
+    @add_common_docstring(
+        ACCEPTED_IMSHOW_KWARGS=sorted(ACCEPTED_IMSHOW_KWARGS),
+        ACCEPTED_PCOLORMESH_KWARGS=sorted(ACCEPTED_PCOLORMESH_KWARGS),
+        ACCEPTED_CONTOUR_KWARGS=sorted(ACCEPTED_CONTOUR_KWARGS)
+    )
+    def plot(self, axes=None, annotate=True,
              title="SunPy Composite Plot", **matplot_args):
-        """Plots the composite map object using matplotlib
+        """Plots the composite map object by calling :meth:`~sunpy.map.GenericMap.plot`
+        or :meth:`~sunpy.map.GenericMap.draw_contours`.
+
+        By default, each map is plotted as an image.  If a given map has levels
+        defined (via :meth:`~sunpy.map.CompositeMap.set_levels`), that map will instead
+        be plotted as contours.
 
         Parameters
         ----------
-
-        axes: `~matplotlib.axes.Axes` or None
+        axes : `~matplotlib.axes.Axes` or None
             If provided the image will be plotted on the given axes. Else the
             current matplotlib axes will be used.
-
         annotate : `bool`
             If true, the data is plotted at it's natural scale; with
             title and axis labels.
-
         title : `str`
             Title of the composite map.
-
         **matplot_args : `dict`
-            Matplotlib Any additional imshow arguments that should be used
+            Any additional Matplotlib arguments that should be used
             when plotting.
 
         Returns
         -------
         ret : `list`
             List of axes image or quad contour sets that have been plotted.
+
+        Notes
+        -----
+        Images are plotted using either `~matplotlib.axes.Axes.imshow` or
+        `~matplotlib.axes.Axes.pcolormesh`, and contours are plotted using
+        `~matplotlib.axes.Axes.contour`.
+        The Matplotlib arguments accepted by the plotting method are passed to it.
+        (For compatability reasons, we enforce a more restrictive set of
+        accepted `~matplotlib.axes.Axes.pcolormesh` arguments.)
+        If any Matplotlib arguments are not used by any plotting method,
+        a ``TypeError`` will be raised.
+        The ``sunpy.map.compositemap`` module includes variables which list the
+        full set of arguments passed to each plotting method. These are:
+
+        >>> import sunpy.map.compositemap
+        >>> sorted(sunpy.map.compositemap.ACCEPTED_IMSHOW_KWARGS)
+        {ACCEPTED_IMSHOW_KWARGS}
+        >>> sorted(sunpy.map.compositemap.ACCEPTED_PCOLORMESH_KWARGS)
+        {ACCEPTED_PCOLORMESH_KWARGS}
+        >>> sorted(sunpy.map.compositemap.ACCEPTED_CONTOUR_KWARGS)
+        {ACCEPTED_CONTOUR_KWARGS}
+
+        If a transformation is required to overlay the maps with the correct
+        alignment, the plot limits may need to be manually set because
+        Matplotlib autoscaling may not work as intended.
         """
 
-        # Get current axes
+        # If axes are not provided, create a WCSAxes based on the first map
         if not axes:
-            axes = plt.gca()
+            axes = wcsaxes_compat.gca_wcs(self._maps[0].wcs)
 
         if annotate:
             axes.set_xlabel(axis_labels_from_ctype(self._maps[0].coordinate_system[0],
@@ -382,48 +421,55 @@ class CompositeMap:
                                                    self._maps[0].spatial_units[1]))
             axes.set_title(title)
 
+        # Checklist to determine unused keywords in `matplot_args`
+        unused_kwargs = set(matplot_args.keys())
+
         # Define a list of plotted objects
         ret = []
         # Plot layers of composite map
         for m in self._maps:
             # Parameters for plotting
-            bl = m._get_lon_lat(m.bottom_left_coord)
-            tr = m._get_lon_lat(m.top_right_coord)
-            x_range = list(u.Quantity([bl[0], tr[0]]).to(m.spatial_units[0]).value)
-            y_range = list(u.Quantity([bl[1], tr[1]]).to(m.spatial_units[1]).value)
             params = {
-                "origin": "lower",
-                "extent": x_range + y_range,
-                "cmap": m.plot_settings['cmap'],
-                "norm": m.plot_settings['norm'],
                 "alpha": m.alpha,
                 "zorder": m.zorder,
             }
             params.update(matplot_args)
 
             # The request to show a map layer rendered as a contour is indicated by a
-            # non False levels property.  If levels is False, then the layer is
-            # rendered using imshow.
+            # non False levels property.
             if m.levels is False:
-                # Check if the linewidths argument is provided, if so, then delete it from params.
-                if matplot_args.get('linewidths'):
-                    del params['linewidths']
+                # We tell GenericMap.plot() that we need to autoalign the map
+                if wcsaxes_compat.is_wcsaxes(axes):
+                    params['autoalign'] = True
 
-                # Check for the presence of masked map data
-                if m.mask is None:
-                    ret.append(axes.imshow(m.data, **params))
+                # Filter `matplot_args`
+                if params.get('autoalign', None) in (True, 'pcolormesh'):
+                    accepted_kwargs = ACCEPTED_PCOLORMESH_KWARGS
                 else:
-                    ret.append(axes.imshow(np.ma.array(np.asarray(m.data), mask=m.mask), **params))
+                    accepted_kwargs = ACCEPTED_IMSHOW_KWARGS
+                for item in matplot_args.keys():
+                    if item not in accepted_kwargs:
+                        del params[item]
+                    else:  # mark as used
+                        unused_kwargs -= {item}
+
+                params['annotate'] = False
+                ret.append(m.plot(**params))
             else:
-                # Check for the presence of masked map data
-                if m.mask is None:
-                    ret.append(axes.contour(m.data, m.levels, **params))
-                else:
-                    ret.append(axes.contour(np.ma.array(np.asarray(
-                        m.data), mask=m.mask), m.levels, **params))
+                # Filter `matplot_args`
+                for item in matplot_args.keys():
+                    if item not in ACCEPTED_CONTOUR_KWARGS:
+                        del params[item]
+                    else:  # mark as used
+                        unused_kwargs -= {item}
+
+                ret.append(m.draw_contours(m.levels, **params))
 
                 # Set the label of the first line so a legend can be created
                 ret[-1].collections[0].set_label(m.name)
+
+        if len(unused_kwargs) > 0:
+            raise TypeError(f'plot() got unexpected keyword arguments {unused_kwargs}')
 
         # Adjust axes extents to include all data
         axes.axis('image')
@@ -433,8 +479,7 @@ class CompositeMap:
         return ret
 
     @peek_show
-    def peek(self, colorbar=True, basic_plot=False, draw_limb=True,
-             draw_grid=False, **matplot_args):
+    def peek(self, colorbar=True, draw_limb=True, draw_grid=False, **matplot_args):
         """
         Displays a graphical overview of the data in this object for user evaluation.
         For the creation of plots, users should instead use the `~sunpy.map.CompositeMap.plot`
@@ -445,33 +490,19 @@ class CompositeMap:
         colorbar : `bool` or `int`
             Whether to display a colorbar next to the plot.
             If specified as an integer a colorbar is plotted for that index.
-
-        basic_plot : `bool`
-            If true, the data is plotted by itself at it's natural scale; no
-            title, labels, or axes are shown.
-
         draw_limb : `bool`
             If true, draws a circle representing the solar limb.
-
-        draw_grid :  `bool`
+        draw_grid : `bool`
             If true, draws a grid over the surface of the Sun.
-
         **matplot_args : dict
             Matplotlib Any additional imshow arguments that should be used
             when plotting.
         """
 
         # Create a figure and add title and axes
-        figure = plt.figure(frameon=not basic_plot)
+        figure = plt.figure()
 
-        # Basic plot
-        if basic_plot:
-            axes = plt.Axes(figure, [0., 0., 1., 1.])
-            axes.set_axis_off()
-            figure.add_axes(axes)
-            matplot_args.update({'annotate': False})
-        else:
-            axes = figure.add_subplot(111)
+        axes = figure.add_subplot(111, projection=self._maps[0])
 
         ret = self.plot(axes=axes, **matplot_args)
 
@@ -498,4 +529,3 @@ class OutOfRangeAlphaValue(ValueError):
     """Exception to raise when an alpha value outside of the range 0-1 is
     requested.
     """
-    pass

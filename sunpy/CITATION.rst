@@ -19,7 +19,7 @@ The project citation should be to the `SunPy paper`_, and the software citation 
     @ARTICLE{sunpy_community2020,
       doi = {10.3847/1538-4357/ab4f7a},
       url = {https://iopscience.iop.org/article/10.3847/1538-4357/ab4f7a},
-      author = {{The SunPy Community} and Barnes, Will T. and Bobra, Monica G. and Christe, Steven D. and Freij, Nabil and Hayes, Laura A. and Ireland, Jack and Mumford, Stuart and Perez-Suarez, David and Ryan, Daniel F. and Shih, Albert Y. and Chanda, Prateek and Glogowski, Kolja and Hewett, Russell and Hughitt, V. Keith and Hill, Andrew and Hiware, Kaustubh and Inglis, Andrew and Kirk, Michael S. F. and Konge, Sudarshan and Mason, James Paul and Maloney, Shane Anthony and Murray, Sophie A. and Panda, Asish and Park, Jongyeob and Pereira, Tiago M. D. and Reardon, Kevin and Savage, Sabrina and Sipőcz, Brigitta M. and Stansby, David and Jain, Yash and Taylor, Garrison and Yadav, Tannmay and Rajul, and Dang, Trung Kien},
+      author = {{The SunPy Community} and Barnes, Will T. and Bobra, Monica G. and Christe, Steven D. and Freij, Nabil and Hayes, Laura A. and Ireland, Jack and Mumford, Stuart and Perez-Suarez, David and Ryan, Daniel F. and Shih, Albert Y. and Chanda, Prateek and Glogowski, Kolja and Hewett, Russell and Hughitt, V. Keith and Hill, Andrew and Hiware, Kaustubh and Inglis, Andrew and Kirk, Michael S. F. and Konge, Sudarshan and Mason, James Paul and Maloney, Shane Anthony and Murray, Sophie A. and Panda, Asish and Park, Jongyeob and Pereira, Tiago M. D. and Reardon, Kevin and Savage, Sabrina and Sipőcz, Brigitta M. and Stansby, David and Jain, Yash and Taylor, Garrison and Yadav, Tannmay and Rajul and Dang, Trung Kien},
       title = {The SunPy Project: Open Source Development and Status of the Version 1.0 Core Package},
       journal = {The Astrophysical Journal},
       volume = {890},
@@ -30,7 +30,6 @@ The project citation should be to the `SunPy paper`_, and the software citation 
     }
 
 You can also get this information with ``sunpy.__citation__``.
-
 
 Other SunPy publications
 ########################
@@ -52,10 +51,7 @@ The SunPy v1.0.8 code was reviewed by `The Journal of Open Source Software (JOSS
       journal = {Journal of Open Source Software}
     }
 
-
 A paper about version v0.5 of SunPy was published in `Computational Science & Discovery <https://iopscience.iop.org/article/10.1088/1749-4699/8/1/014009>`__.
-
-
 
 Acknowledging SunPy in Posters and Talks
 ----------------------------------------
@@ -65,8 +61,7 @@ For websites please link the image to `sunpy.org`_.
 Other versions of the logo are available in the `sunpy-logo repository`_.
 
 .. _SunPy paper: https://doi.org/10.3847/1538-4357/ab4f7a
-.. _SunPy JOSS paper: https://doi.org/10.21105/joss.01832
-.. _Sunpy logo: https://sunpy.org/about/#acknowledging
+.. _Sunpy logo: https://github.com/sunpy/sunpy-logo/blob/master/sunpy_logo.svg
 .. _sunpy.org: https://sunpy.org/
 .. _sunpy-logo repository: https://github.com/sunpy/sunpy-logo/
 .. _Zenodo DOI: https://doi.org/10.5281/zenodo.591887

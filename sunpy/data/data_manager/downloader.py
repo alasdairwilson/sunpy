@@ -1,7 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
 
-from parfive import Downloader
+from sunpy.util.parfive_helpers import Downloader
 
 __all__ = ['DownloaderBase', 'DownloaderError', 'ParfiveDownloader']
 
@@ -17,9 +17,9 @@ class DownloaderBase(metaclass=ABCMeta):
 
         Parameters
         ----------
-        url: `str`
+        url : `str`
             URL of the file to be downloaded.
-        path: `pathlib.Path` or `str`
+        path : `pathlib.Path` or `str`
             Path where the file should be downloaded to.
 
         Raises
@@ -27,7 +27,6 @@ class DownloaderBase(metaclass=ABCMeta):
         `DownloaderError`
             DownloaderError is raised when download errors.
         """
-        raise NotImplementedError
 
 
 class DownloaderError(Exception):
@@ -39,7 +38,7 @@ class DownloaderError(Exception):
 class ParfiveDownloader(DownloaderBase):
     """
     Concrete implementation of `~sunpy.data.data_manager.downloader.DownloaderBase`
-    using `parfive`.
+    using :mod:`parfive`.
     """
 
     def download(self, url, path):

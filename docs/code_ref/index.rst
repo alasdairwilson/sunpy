@@ -1,24 +1,22 @@
 .. _reference:
 
-==============
-Code Reference
-==============
+*************
+API Reference
+*************
 
 .. toctree::
    :maxdepth: 2
 
-   sunpy
    coordinates/index
    data
    database
    image
-   instr
    io
    map
    net
    physics
-   roi
    sun
+   sunpy
    time
    timeseries
    util

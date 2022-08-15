@@ -1,26 +1,27 @@
 """
-========================
-Find peaks in TimeSeries
-========================
+==============================
+Find Peaks in sunpy TimeSeries
+==============================
 
-How to find minimum or maximum peaks in a TimeSeries.
+This example illustrates how to find minimum or maximum peaks in a TimeSeries.
 Note: Peak finding is a complex problem that has many potential solutions and
 this example is just one method of many.
 """
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
+from sunpy.data.sample import GOES_XRS_TIMESERIES
 from sunpy.timeseries import TimeSeries
-from sunpy.data.sample import NOAAINDICES_TIMESERIES as noaa_ind
 
 ##############################################################################
 # We will now create a TimeSeries object from an observational data source,
 # Also, we will truncate it to do analysis on a smaller time duration of 10
 # years.
 
-ts_noaa_ind = TimeSeries(noaa_ind, source='NOAAIndices')
-my_timeseries = ts_noaa_ind.truncate('1991/01/01', '2001/01/01')
-fig, ax = plt.subplots()
+goes_lc = TimeSeries(GOES_XRS_TIMESERIES)
+my_timeseries = goes_lc.truncate('2011/06/07 06:10', '2011/06/07 09:00')
+
+plt.figure()
 my_timeseries.plot()
 
 ##############################################################################
@@ -97,17 +98,17 @@ def findpeaks(series, DELTA):
 # Now we take the column 'sunspot SWO' of this TimeSeries and try to find it's
 # extrema using the function findpeaks. We take the value of DELTA to be
 # approximately the length of smallest peak that we wish to detect.
-series = my_timeseries.to_dataframe()['sunspot SWO']
-minpeaks, maxpeaks = findpeaks(series, DELTA=10.)
+series = my_timeseries.to_dataframe()['xrsa']
+minpeaks, maxpeaks = findpeaks(series, DELTA=1e-7)
 # Plotting the figure and extremum points
-fig, ax = plt.subplots()
-ax.set_ylabel('Sunspot Number')
-ax.set_xlabel('Time')
-ax.set_title('Peaks in TimeSeries')
+plt.figure()
+plt.xlabel('Time')
+plt.ylabel("Flux (Wm$^{-2}$")
+plt.title('Peaks in TimeSeries')
 series.plot()
-ax.scatter(*zip(*minpeaks), color='red', label='min')
-ax.scatter(*zip(*maxpeaks), color='green', label='max')
-ax.legend()
-ax.grid(True)
+plt.scatter(*zip(*minpeaks), color='red', label='min')
+plt.scatter(*zip(*maxpeaks), color='green', label='max')
+plt.legend()
+plt.grid(True)
 
 plt.show()

@@ -1,21 +1,38 @@
-SunPy Documentation
-*******************
+************************
+sunpy core Documentation
+************************
 
-Welcome to SunPy's documentation.
+The sunpy core package is a community-developed, free and open-source solar
+data analysis environment for Python.
 
-SunPy is a community-developed, free and open-source solar data analysis environment for Python.
+.. grid:: 1 2 2 2
+    :gutter: 3
 
-Here, we detail each part of SunPy and provide a user guide and a gallery of examples.
+    .. grid-item-card::
+        :class-card: card
 
-Documentation :any:`index <genindex>` and :any:`Module <modindex>` index.
+        Getting started
+        ^^^^^^^^^^^^^^^
 
-.. toctree::
-  :maxdepth: 2
+        .. toctree::
+            :maxdepth: 1
 
-  guide/index
-  code_ref/index
-  generated/gallery/index
-  dev_guide/index
-  whatsnew/index
-  code_of_conduct
-  about
+            installation
+            guide/index
+            generated/gallery/index
+            code_ref/index
+            whatsnew/index
+
+    .. grid-item-card::
+        :class-card: card
+
+        Other info
+        ^^^^^^^^^^
+
+        .. toctree::
+            :maxdepth: 1
+
+            about
+            code_ref/known_issues
+            code_ref/stability
+            dev_guide/index

@@ -26,6 +26,10 @@ class TimeRange:
        Regardless of how a `sunpy.time.TimeRange` is constructed it will always
        provide a positive time range where the start time is before the end time.
 
+       ``__contains__`` has been implemented which means you can
+       check if a time is within the time range you have created.
+       Please see the example section below.
+
     Parameters
     ----------
     a : {parse_time_types}
@@ -54,7 +58,26 @@ class TimeRange:
                576000.0 minutes or
                34560000.0 seconds
     <BLANKLINE>
+    >>> time1 = '2014/5/5 12:11'
+    >>> time2 = '2012/5/5 12:11'
+    >>> time_range = TimeRange('2014/05/04 13:54', '2018/02/03 12:12')
+    >>> time1 in time_range
+    True
+    >>> time2 in time_range
+    False
+
+    >>> import numpy as np
+    >>> from astropy.time import TimeDelta
+    >>> time_range = TimeRange('2014/05/05 12:00', '2014/05/10 12:00')
+    >>> np.arange(time_range.start, time_range.end, TimeDelta(24*60*60, format = "sec"))
+    array([<Time object: scale='utc' format='isot' value=2014-05-05T12:00:00.000>,
+       <Time object: scale='utc' format='isot' value=2014-05-06T12:00:00.000>,
+       <Time object: scale='utc' format='isot' value=2014-05-07T12:00:00.000>,
+       <Time object: scale='utc' format='isot' value=2014-05-08T12:00:00.000>,
+       <Time object: scale='utc' format='isot' value=2014-05-09T12:00:00.000>],
+      dtype=object)
     """
+
     def __init__(self, a, b=None, format=None):
         # If a is a TimeRange object, copy attributes to new instance.
         self._t1 = None
@@ -146,7 +169,7 @@ class TimeRange:
         Returns
         -------
         `astropy.time.Time`
-           The center time.
+            The center time.
         """
         return self.start + self.dt / 2
 
@@ -158,7 +181,7 @@ class TimeRange:
         Returns
         -------
         `astropy.units.Quantity`
-           The amount of hours between the start and end time.
+            The amount of hours between the start and end time.
         """
         return self.dt.to('hour')
 
@@ -182,7 +205,7 @@ class TimeRange:
         Returns
         -------
         `astropy.units.Quantity`
-           The amount of seconds between the start and end time.
+            The amount of seconds between the start and end time.
         """
         return self.dt.to('s')
 
@@ -194,7 +217,7 @@ class TimeRange:
         Returns
         -------
         `astropy.units.Quantity`
-           The amount of minutes between the start and end time.
+            The amount of minutes between the start and end time.
         """
         return self.dt.to('min')
 
@@ -335,12 +358,6 @@ class TimeRange:
                     0.2 minutes or
                     12.0 seconds]
         """
-        # TODO: After astropy 3.1 remove this check
-        if isinstance(window, timedelta):
-            window = TimeDelta(window, format="datetime")
-        if isinstance(cadence, timedelta):
-            cadence = TimeDelta(cadence, format="datetime")
-
         if not isinstance(window, TimeDelta):
             window = TimeDelta(window)
         if not isinstance(cadence, TimeDelta):
@@ -393,10 +410,11 @@ class TimeRange:
         """
         Return all partial days contained within the time range.
         """
+        delta = self.end.to_datetime().date() - self.start.to_datetime().date()
         dates = []
         dates = [
             parse_time(self.start.strftime('%Y-%m-%d')) + TimeDelta(i*u.day)
-            for i in range(int(self.days.value) + 1)
+            for i in range(delta.days + 1)
         ]
         return dates
 
@@ -430,3 +448,26 @@ class TimeRange:
         """
         this_time = parse_time(time)
         return this_time >= self.start and this_time <= self.end
+
+    def intersects(self, other):
+        """
+        Return `True` if this interval overlaps with *other*.
+
+        Parameters
+        ----------
+        other : sunpy.time.TimeRange
+            Other `~sunpy.time.TimeRange` to check for intersection.
+
+        Notes
+        -----
+        Both intervals are treated as closed, i.e., their endpoints are included.
+        """
+        # Order intervals so int1 has the earliest start time
+        if other.start > self.start:
+            int_first = self
+            int_second = other
+        else:
+            int_first = other
+            int_second = self
+
+        return int_second.start <= int_first.end

@@ -1,13 +1,12 @@
-import os
 import datetime
 
 import numpy as np
 import pytest
 
-from sunpy.data.test import rootdir
+from sunpy.data.test import get_test_filepath
 from sunpy.io.special import genx
 
-TESTING = genx.read_genx(os.path.join(rootdir, 'generated_sample.genx'))
+TESTING = genx.read_genx(get_test_filepath('generated_sample.genx'))
 
 
 def test_skeleton():
@@ -32,7 +31,8 @@ def test_array_elements_values():
     np.testing.assert_allclose(TESTING['MYSTRUCTURE']['MYFARRAYD'][:, 0], np.arange(6., step=2))
     assert TESTING['MYSTRUCTURE']['MYDARRAYD'][1, 2] == 5.
     assert TESTING['MYSTRUCTURE']['NESTEDSTRUCT']['MYLARRAYD'][3, 0, 1] == 19
-    np.testing.assert_allclose(TESTING['MYSTRUCTURE']['NESTEDSTRUCT']['MYLARRAYD'][2, :, 0], np.arange(12, 17, step=2))
+    np.testing.assert_allclose(TESTING['MYSTRUCTURE']['NESTEDSTRUCT']
+                               ['MYLARRAYD'][2, :, 0], np.arange(12, 17, step=2))
     assert TESTING['MYSTRUCTURE']['MYCARRAY'][1] == complex(1, -9)
     assert TESTING['MYSTRUCTURE']['MYDCARRAY'][2] == complex(12, 1)
     assert TESTING['MYSTRUCTURE']['NESTEDSTRUCT']['MYUL64NUMBER'] == 18446744073709551615
@@ -54,10 +54,12 @@ def test_value_slice(slice, value):
                                             (TESTING['MYSTRUCTURE']['MYFARRAYD'], np.float32),
                                             (TESTING['MYSTRUCTURE']['MYDARRAY'], np.float64),
                                             (TESTING['MYSTRUCTURE']['MYDARRAYD'], np.float64),
-                                            (TESTING['MYSTRUCTURE']['NESTEDSTRUCT']['MYLARRAY'], np.int32),
-                                            (TESTING['MYSTRUCTURE']['NESTEDSTRUCT']['MYLARRAYD'], np.int32),
+                                            (TESTING['MYSTRUCTURE']['NESTEDSTRUCT']
+                                             ['MYLARRAY'], np.int32),
+                                            (TESTING['MYSTRUCTURE']['NESTEDSTRUCT']
+                                             ['MYLARRAYD'], np.int32),
                                             (TESTING['MYSTRUCTURE']['RANDOMNUMBERS'], np.int16),
-                                            (TESTING['MYSTRUCTURE']['MYCARRAY'], np.complex),
+                                            (TESTING['MYSTRUCTURE']['MYCARRAY'], complex),
                                             (TESTING['MYSTRUCTURE']['MYDCARRAY'], np.complex64)])
 def test_type(myarray, dtype):
     assert myarray.dtype == dtype
@@ -66,4 +68,5 @@ def test_type(myarray, dtype):
 def test_date():
     creation_str = TESTING['HEADER']['CREATION']
     creation = datetime.datetime.strptime(creation_str, '%a %b %d %H:%M:%S %Y')
-    assert int(''.join(chr(x) for x in TESTING['MYSTRUCTURE']['RANDOMNUMBERS'][-4:])) == creation.year
+    assert int(''.join(chr(x)
+                       for x in TESTING['MYSTRUCTURE']['RANDOMNUMBERS'][-4:])) == creation.year

@@ -5,78 +5,67 @@ Overplotting SRS active region locations on a magnetograms
 
 How to find and plot the location of an active region on an HMI magnetogram.
 """
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
-import astropy.units as u
-from astropy.coordinates import SkyCoord
-from astropy.time import TimeDelta
-
-import sunpy.map
 import sunpy.coordinates
+import sunpy.data.sample
+import sunpy.map
 from sunpy.io.special import srs
-from sunpy.time import parse_time
-from sunpy.net import Fido, attrs as a
 
 ##############################################################################
-# For this example, we will search for and download a single HMI using Fido.
-start_time = parse_time("2017-01-25")
-end_time = start_time + TimeDelta(23*u.hour + 59*u.minute + 59*u.second)
-results = Fido.search(a.Time(start_time, end_time),
-                      a.Instrument('HMI') & a.Physobs("LOS_magnetic_field"),
-                      a.Sample(60 * u.second))
+# For this example, we will start with the sample data. We need an HMI file and
+# use it to create a map, and the SRS table which contains a list of active
+# regions. Both of these data can be downloaded with ``Fido``.
 
-##############################################################################
-# Let's select only the first file, download it and create a map.
-result = results[0, 0]
-file_name = Fido.fetch(result)
-smap = sunpy.map.Map(file_name)
-
-##############################################################################
-# Download the SRS file.
-srs_results = Fido.search(a.Time(start_time, end_time), a.Instrument('SRS_TABLE'))
-srs_downloaded_files = Fido.fetch(srs_results)
-
-##############################################################################
-# We get one SRS file per day. To read this file, we pass the filename into
-# the SRS reader. So now `srs_table` contains an astropy table.
-srs_table = srs.read_srs(srs_downloaded_files[0])
-print(srs_table)
+smap = sunpy.map.Map(sunpy.data.sample.HMI_LOS_IMAGE)
+srs_table = srs.read_srs(sunpy.data.sample.SRS_TABLE)
 
 ##############################################################################
 # We only need the rows which have 'ID' = 'I' or 'IA'.
 
-if 'I' in srs_table['ID'] or 'IA' in srs_table['ID']:
-    srs_table = srs_table[np.logical_or(srs_table['ID'] == 'I',
-                                        srs_table['ID'] == 'IA')]
-else:
-    print("Warning : No I or IA entries for this date.")
-    srs_table = None
+srs_table = srs_table[np.logical_or(srs_table['ID'] == 'I', srs_table['ID'] == 'IA')]
 
 ##############################################################################
-# Now we extract the latitudes, longitudes and the region numbers. We make an
-# empty list if there are no ARs.
+# Now we extract the latitudes, longitudes and the region numbers.
+# :meth:`~astropy.visualization.wcsaxes.WCSAxes.plot_coord` will error on some
+# versions of Astropy if a coordinate component contains a mask, but since
+# none of the masks in these arrays here actually mask any elements, we simply
+# remove the masks.
 
-if srs_table is not None:
-    lats = srs_table['Latitude']
-    lngs = srs_table['Longitude']
-    numbers = srs_table['Number']
-else:
-    lats = lngs = numbers = []
+lats = srs_table['Latitude']
+if hasattr(lats, 'mask'):
+    lats = lats.unmasked
+lngs = srs_table['Longitude']
+if hasattr(lngs, 'mask'):
+    lngs = lngs.unmasked
+numbers = srs_table['Number']
 
 ##############################################################################
 # Let's plot the results by defining coordinates for each location.
 
-ax = plt.subplot(projection=smap)
-smap.plot(vmin=-120, vmax=120)
-smap.draw_limb()
-ax.set_autoscale_on(False)
+fig = plt.figure()
+ax = fig.add_subplot(projection=smap)
+# Passing vmin/vmax to ``plot`` does not work since
+# a normalisation is set on the map. So we have to
+# work around it like so:
+smap.plot_settings["norm"].vmin = -150
+smap.plot_settings["norm"].vmax = 150
+smap.plot(axes=ax)
+smap.draw_limb(axes=ax)
 
-if len(lats) > 0:
-    c = SkyCoord(lngs, lats, frame="heliographic_stonyhurst")
-    ax.plot_coord(c, 'o')
+# Add a text box and arrow pointing to each active region
+lat_text = -40
+transparent_white = (1, 1, 1, 0.5)
+for num, lng, lat in zip(numbers, lngs.value, lats.value):
+    ax.annotate(num, (lng, lat),
+                xytext=(320, lat_text),
+                xycoords=ax.get_transform('heliographic_stonyhurst'),
+                backgroundcolor=transparent_white,
+                color='red',
+                fontweight='bold',
+                arrowprops=dict(facecolor=transparent_white, width=1, headwidth=10),
+                horizontalalignment='right', verticalalignment='top')
+    lat_text += 10
 
-    for i, num in enumerate(numbers):
-        ax.annotate(num, (lngs[i].value, lats[i].value),
-                    xycoords=ax.get_transform('heliographic_stonyhurst'))
 plt.show()

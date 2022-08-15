@@ -1,8 +1,12 @@
 """
-This module provides routines for the coalignment of images and
-`~sunpy.map.mapsequences`.
+.. deprecated:: 4.0
+    Use `sunkit_image.coalignment` instead.
+    This module will be removed in sunpy 4.1.
 
-Currently this module provides image coalignment by template matching.
+This module provides routines for the co-alignment of images and
+`~sunpy.map.mapsequence.MapSequence`.
+
+Currently this module provides image co-alignment by template matching.
 Which is partially inspired by the SSWIDL routine
 `tr_get_disp.pro <http://www.heliodocs.com/php/xdoc_print.php?file=$SSW/trace/idl/util/tr_get_disp.pro>`__.
 
@@ -17,24 +21,30 @@ References
    1995, p. 120-123 http://www.scribblethink.org/Work/nvisionInterface/vi95_lewis.pdf.
 """
 from copy import deepcopy
-import warnings
 
 import numpy as np
-from scipy.ndimage.interpolation import shift
+from scipy.ndimage import shift
 from skimage.feature import match_template
 
 import astropy.units as u
 
 import sunpy.map
 from sunpy.map.mapbase import GenericMap
-from sunpy.util import (SunpyUserWarning, SunpyDeprecationWarning, deprecated)
+from sunpy.util.decorators import deprecated
+from sunpy.util.exceptions import warn_user
 
 __all__ = ['calculate_shift', 'clip_edges', 'calculate_clipping',
            'match_template_to_layer', 'find_best_match_location',
            'get_correlation_shifts', 'parabolic_turning_point',
-           'repair_image_nonfinite', 'check_for_nonfinite_entries',
+           'check_for_nonfinite_entries',
            'apply_shifts', 'mapsequence_coalign_by_match_template',
            'calculate_match_template_shift']
+
+DEPRECATED_SINCE = '4.0'
+MESSAGE = 'The {func} {obj_type} is deprecated and may be removed in {future_version}.'
+ALT_MESSAGE = '\n        Use `sunkit_image.coalignment.{func}` instead.'
+# Use message rather than alternative so we can directly link to functions in sunkit_image
+MESSAGE += ALT_MESSAGE
 
 
 def _default_fmap_function(data):
@@ -47,7 +57,8 @@ def _default_fmap_function(data):
     return np.float64(data)
 
 
-def calculate_shift(this_layer, template, repair_nonfinite=True):
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
+def calculate_shift(this_layer, template):
     """
     Calculates the pixel shift required to put the template in the "best"
     position on a layer.
@@ -66,26 +77,15 @@ def calculate_shift(this_layer, template, repair_nonfinite=True):
         Pixel shifts ``(yshift, xshift)`` relative to the offset of the template
         to the input array.
     """
-    if repair_nonfinite:
-        # Repair any NANs, Infs, etc in the layer and the template
-        # This behaviour is deprecated
-        warnings.warn('The repairing of nonfinite values is deprecated '
-                      'and will be removed in future versions. '
-                      'You can disable this behaviour by setting the '
-                      'repair_nonfinite kwarg to False.', SunpyDeprecationWarning)
-        this_layer = repair_image_nonfinite(this_layer)
-        template = repair_image_nonfinite(template)
-    else:
-        # Warn user if any NANs, Infs, etc are present in the layer or the template
-        check_for_nonfinite_entries(this_layer, template)
-
+    # Warn user if any NANs, Infs, etc are present in the layer or the template
+    check_for_nonfinite_entries(this_layer, template)
     # Calculate the correlation array matching the template to this layer
     corr = match_template_to_layer(this_layer, template)
-
     # Calculate the y and x shifts in pixels
     return find_best_match_location(corr)
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 @u.quantity_input
 def clip_edges(data, yclips: u.pix, xclips: u.pix):
     """
@@ -119,6 +119,7 @@ def clip_edges(data, yclips: u.pix, xclips: u.pix):
                 int(xclips[0].value): nx - int(xclips[1].value)]
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 @u.quantity_input
 def calculate_clipping(y: u.pix, x: u.pix):
     """
@@ -176,6 +177,7 @@ def _lower_clip(z):
     return zlower
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 def match_template_to_layer(layer, template):
     """
     Calculate the correlation array that describes how well the template
@@ -197,6 +199,7 @@ def match_template_to_layer(layer, template):
     return match_template(layer, template)
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 def find_best_match_location(corr):
     """
     Calculate an estimate of the location of the peak of the correlation result
@@ -229,6 +232,7 @@ def find_best_match_location(corr):
     return y_shift_correlation_array, x_shift_correlation_array
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 def get_correlation_shifts(array):
     """
     Estimate the location of the maximum of a fit to the input array. The
@@ -274,6 +278,7 @@ def get_correlation_shifts(array):
     return y_location * u.pix, x_location * u.pix
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 def parabolic_turning_point(y):
     """
     Find the location of the turning point for a parabola
@@ -298,6 +303,7 @@ def parabolic_turning_point(y):
     return numerator / denominator
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 def check_for_nonfinite_entries(layer_image, template_image):
     """
     Issue a warning if there is any nonfinite entry in the layer or template images.
@@ -310,70 +316,21 @@ def check_for_nonfinite_entries(layer_image, template_image):
         A two-dimensional `numpy.ndarray`.
     """
     if not np.all(np.isfinite(layer_image)):
-        warnings.warn('The layer image has nonfinite entries. '
-                      'This could cause errors when calculating shift between two '
-                      'images. Please make sure there are no infinity or '
-                      'Not a Number values. For instance, replacing them with a '
-                      'local mean.', SunpyUserWarning)
+        warn_user('The layer image has nonfinite entries. '
+                  'This could cause errors when calculating shift between two '
+                  'images. Please make sure there are no infinity or '
+                  'Not a Number values. For instance, replacing them with a '
+                  'local mean.')
 
     if not np.all(np.isfinite(template_image)):
-        warnings.warn('The template image has nonfinite entries. '
-                      'This could cause errors when calculating shift between two '
-                      'images. Please make sure there are no infinity or '
-                      'Not a Number values. For instance, replacing them with a '
-                      'local mean.', SunpyUserWarning)
+        warn_user('The template image has nonfinite entries. '
+                  'This could cause errors when calculating shift between two '
+                  'images. Please make sure there are no infinity or '
+                  'Not a Number values. For instance, replacing them with a '
+                  'local mean.')
 
 
-@deprecated("1.1")
-def repair_image_nonfinite(image):
-    """
-    Return a new image in which all the nonfinite entries of the original image
-    have been replaced by the local mean.
-
-    Parameters
-    ----------
-    image : `numpy.ndarray`
-        A two-dimensional `numpy.ndarray`.
-
-    Returns
-    -------
-    `numpy.ndarray`
-        A two-dimensional `numpy.ndarray` of the same shape as the input
-        that has all the non-finite entries replaced by a local mean. The
-        algorithm repairs one non-finite entry at every pass. At each pass,
-        the next non-finite value is replaced by the mean of its finite
-        valued nearest neighbors.
-    """
-    repaired_image = deepcopy(image)
-    nx = repaired_image.shape[1]
-    ny = repaired_image.shape[0]
-    bad_index = np.where(np.logical_not(np.isfinite(repaired_image)))
-    while bad_index[0].size != 0:
-        by = bad_index[0][0]
-        bx = bad_index[1][0]
-
-        # x locations taking in to account the boundary
-        x = bx
-        if bx == 0:
-            x = 1
-        if bx == nx - 1:
-            x = nx - 2
-
-        # y locations taking in to account the boundary
-        y = by
-        if by == 0:
-            y = 1
-        if by == ny - 1:
-            y = ny - 2
-
-        # Get the sub array around the bad index, and find the local mean
-        # ignoring nans
-        subarray = repaired_image[y - 1: y + 2, x - 1: x + 2]
-        repaired_image[by, bx] = np.mean(subarray[np.isfinite(subarray)])
-        bad_index = np.where(np.logical_not(np.isfinite(repaired_image)))
-    return repaired_image
-
-
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 @u.quantity_input
 def apply_shifts(mc, yshift: u.pix, xshift: u.pix, clip=True, **kwargs):
     """
@@ -396,7 +353,7 @@ def apply_shifts(mc, yshift: u.pix, xshift: u.pix, clip=True, **kwargs):
 
     Notes
     -----
-    All other keywords are passed to `scipy.ndimage.interpolation.shift`.
+    All other keywords are passed to `scipy.ndimage.shift`.
 
     Returns
     -------
@@ -421,8 +378,9 @@ def apply_shifts(mc, yshift: u.pix, xshift: u.pix, clip=True, **kwargs):
             shifted_data = clip_edges(shifted_data, yclips, xclips)
             new_meta['naxis1'] = shifted_data.shape[1]
             new_meta['naxis2'] = shifted_data.shape[0]
-            new_meta['crpix1'] = m.reference_pixel.x.value + xshift[i].value - xshift[0].value
-            new_meta['crpix2'] = m.reference_pixel.y.value + yshift[i].value - yshift[0].value
+            # Add one to go from zero-based to one-based indexing
+            new_meta['crpix1'] = m.reference_pixel.x.value + 1 + xshift[i].value - xshift[0].value
+            new_meta['crpix2'] = m.reference_pixel.y.value + 1 + yshift[i].value - yshift[0].value
 
         new_map = sunpy.map.Map(shifted_data, new_meta)
 
@@ -432,9 +390,9 @@ def apply_shifts(mc, yshift: u.pix, xshift: u.pix, clip=True, **kwargs):
     return sunpy.map.Map(new_mc, sequence=True)
 
 
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 def calculate_match_template_shift(mc, template=None, layer_index=0,
-                                   func=_default_fmap_function,
-                                   repair_nonfinite=True):
+                                   func=_default_fmap_function):
     """
     Calculate the arcsecond shifts necessary to co-register the layers in a
     `~sunpy.map.MapSequence` according to a template taken from that
@@ -504,8 +462,7 @@ def calculate_match_template_shift(mc, template=None, layer_index=0,
         this_layer = func(m.data)
 
         # Calculate the y and x shifts in pixels
-        yshift, xshift = calculate_shift(this_layer, tplate,
-                                         repair_nonfinite=repair_nonfinite)
+        yshift, xshift = calculate_shift(this_layer, tplate)
 
         # Keep shifts in pixels
         yshift_keep[i] = yshift
@@ -525,9 +482,10 @@ def calculate_match_template_shift(mc, template=None, layer_index=0,
 
 
 # Coalignment by matching a template
+@deprecated(since=DEPRECATED_SINCE, message=MESSAGE)
 def mapsequence_coalign_by_match_template(mc, template=None, layer_index=0,
                                           func=_default_fmap_function, clip=True,
-                                          shift=None, repair_nonfinite=True, **kwargs):
+                                          shift=None, **kwargs):
     """
     Co-register the layers in a `~sunpy.map.MapSequence` according to a
     template taken from that `~sunpy.map.MapSequence`. This method REQUIRES
@@ -606,8 +564,7 @@ def mapsequence_coalign_by_match_template(mc, template=None, layer_index=0,
     if shift is None:
         shifts = calculate_match_template_shift(mc, template=template,
                                                 layer_index=layer_index,
-                                                func=func,
-                                                repair_nonfinite=repair_nonfinite)
+                                                func=func)
         xshift_arcseconds = shifts['x']
         yshift_arcseconds = shifts['y']
     else:

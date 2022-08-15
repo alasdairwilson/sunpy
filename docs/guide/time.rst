@@ -1,11 +1,11 @@
 .. _time-in-sunpy:
 
-=============
-Time in SunPy
-=============
+*************
+Time in sunpy
+*************
 
 Working with times and time ranges is a standard task in solar data analysis and as such
-SunPy strives to provide convenient and easy methods to do the simple stuff. Python
+sunpy strives to provide convenient and easy methods to do the simple stuff. Python
 already provides an object for a time or date through `datetime.datetime`.
 However, `datetime.datetime` does not provide support for common time formats used in
 solar physics nor leap seconds. To alleviate this, we use `astropy.time.Time` internally
@@ -14,14 +14,14 @@ which allows us to provide a superior user experience.
 .. _parse-time:
 
 1. Parsing Times
-----------------
+================
 
-Solar data is associated with a number of different time formats. SunPy provides a simple
+Solar data is associated with a number of different time formats. sunpy provides a simple
 parsing function which can deal with most every format that a user may encounter. Called
 `sunpy.time.parse_time()`, this function can take a variety of inputs.
 
 Strings
-^^^^^^^
+-------
 
 The most commonly used are strings and we support a selection of formats
 which are matched using regrex. We currently support the following style of string formats::
@@ -68,14 +68,14 @@ If we pass some of these strings into `sunpy.time.parse_time()`::
 
 Each of the above returns the same `~astropy.time.Time` object ``<Time object: scale='utc' format='isot' value=2007-05-04T21:08:12.000>``.
 
-We also support ``utime``, which is the amount of seconds from `1979-01-01 00:00:00 UTC`.
+We also support ``utime``, which is the amount of seconds from 1979-01-01 00:00:00 UTC.
 Same as Unix time but this starts 9 years later. The parse_time function also accepts this as input, e.g.::
 
     >>> parse_time(894316092.00000000, format='utime')
     <Time object: scale='utc' format='utime' value=894316092.0>
 
 Other formats
-^^^^^^^^^^^^^
+-------------
 
 `sunpy.time.parse_time()` understands more than just a string.
 For example::
@@ -91,7 +91,7 @@ For example::
 
     >>> import pandas
     >>> parse_time(pandas.Timestamp('2007-05-04T21:08:12'))  # pandas.Timestamp
-    <Time object: scale='utc' format='datetime' value=2007-05-04 21:08:12>
+    <Time object: scale='utc' format='datetime64' value=2007-05-04T21:08:12.000000000>
 
     >>> time_ranges = [datetime.datetime(2007, 5, i) for i in range(1, 3)]
     >>> parse_time(pandas.Series(time_ranges))  # pandas.Series
@@ -106,8 +106,8 @@ For example::
     >>> parse_time(np.arange('2007-05-03', '2007-05-04', dtype='datetime64[D]'))  # np.ndarray
     <Time object: scale='utc' format='isot' value=['2007-05-03T00:00:00.000']>
 
-`astropy.time.Time` API comparision
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+`astropy.time.Time` API comparison
+----------------------------------
 
 `sunpy.time.parse_time` is a wrapper around `astropy.time.Time`. The API is
 nearly identical as `~astropy.time.Time` but supports more time input formats.
@@ -118,14 +118,14 @@ as you would do with `~astropy.time.Time`. An example::
     >>> parse_time(times, format='isot', scale='tai')
     <Time object: scale='tai' format='isot' value=['1999-01-01T00:00:00.123' '2010-01-01T00:00:00.000']>
 
-Please be aware that all SunPy functions which require time as an input sanitize the input using `~sunpy.time.parse_time`.
+Please be aware that all sunpy functions which require time as an input sanitize the input using `~sunpy.time.parse_time`.
 
 2. Time Ranges
---------------
+==============
 
 A very standard task in data analysis is to have to deal with pairs of times or time
 ranges. This occurs very often with plotting or when searching for data. To deal with
-time ranges SunPy provides the `sunpy.time.TimeRange` object. A TimeRange object can be created
+time ranges sunpy provides the `sunpy.time.TimeRange` object. A TimeRange object can be created
 very easily by providing it with two time strings, a start time and an end time: ::
 
     >>> from sunpy.time import TimeRange

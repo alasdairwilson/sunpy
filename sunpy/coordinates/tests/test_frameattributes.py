@@ -1,16 +1,21 @@
-# -*- coding: utf-8 -*-
 
 import pytest
 
 import astropy.units as u
-from astropy.time import Time
+from astropy.coordinates import ICRS, HeliocentricMeanEcliptic, SphericalRepresentation, get_body_barycentric
 from astropy.tests.helper import assert_quantity_allclose
-from astropy.coordinates import ICRS, get_body_barycentric
+from astropy.time import Time
 
+from sunpy.coordinates import frames, get_earth
+from sunpy.coordinates.frameattributes import ObserverCoordinateAttribute, TimeFrameAttributeSunPy
+from sunpy.coordinates.frames import (
+    Heliocentric,
+    HeliocentricInertial,
+    HeliographicCarrington,
+    HeliographicStonyhurst,
+    Helioprojective,
+)
 from sunpy.time import parse_time
-from ..frames import Helioprojective, HeliographicStonyhurst, HeliocentricInertial
-from ..frameattributes import TimeFrameAttributeSunPy, ObserverCoordinateAttribute
-from sunpy.coordinates import get_earth, frames
 
 
 @pytest.fixture
@@ -24,7 +29,7 @@ def oca():
 
 
 def test_now(attr):
-    """ We can't actually test the value independantly """
+    """ We can't actually test the value independently """
     result, converted = attr.convert_input('now')
 
     assert isinstance(result, Time)
@@ -32,7 +37,7 @@ def test_now(attr):
 
 
 def test_none(attr):
-    """ We can't actually test the value independantly """
+    """ We can't actually test the value independently """
     result, converted = attr.convert_input(None)
 
     assert result is None
@@ -94,11 +99,32 @@ def test_string_coord(oca):
     assert coord.obstime == parse_time(obstime)
 
 
-def test_observer_not_hgs(oca):
+def test_observer_not_hgs_sunpy(oca):
     observer = HeliocentricInertial(0*u.deg, 0*u.deg, 1*u.AU, obstime='2001-01-01')
     result, converted = oca.convert_input(observer)
 
     assert isinstance(result, HeliographicStonyhurst)
+    assert result.obstime == observer.obstime
+    assert converted
+
+
+def test_observer_not_hgs_astropy(oca):
+    observer = HeliocentricMeanEcliptic(0*u.deg, 0*u.deg, 1*u.AU, obstime='2001-01-01')
+    result, converted = oca.convert_input(observer)
+
+    assert isinstance(result, HeliographicStonyhurst)
+    assert result.obstime == observer.obstime
+    assert converted
+
+
+def test_observer_not_default_representation(oca):
+    observer = HeliographicStonyhurst((1, 0, 0) * u.AU, representation_type='cartesian',
+                                      obstime='2001-01-01')
+    result, converted = oca.convert_input(observer)
+
+    assert isinstance(result, HeliographicStonyhurst)
+    assert issubclass(result.representation_type, SphericalRepresentation)
+    assert result.obstime == observer.obstime
     assert converted
 
 
@@ -146,6 +172,14 @@ def test_coord_get():
     assert str(obs) == "<HeliographicStonyhurst Coordinate for 'mars'>"
 
 
+def test_observer_self_get():
+    hgc_noobstime = HeliographicCarrington(observer="self")
+    assert hgc_noobstime.observer == "self"
+
+    hgc_obstime = HeliographicCarrington(observer="self", obstime="2001-01-01")
+    assert hgc_obstime.observer == "self"
+
+
 def test_default_hcc_observer():
     h = frames.Heliocentric()
     assert h.observer is None
@@ -171,3 +205,12 @@ def test_obstime_hack():
     assert_quantity_allclose(obs.lon, earth.lon)
     assert_quantity_allclose(obs.lat, earth.lat)
     assert_quantity_allclose(obs.radius, earth.radius)
+
+
+@pytest.mark.parametrize('frame_class', [Heliocentric, HeliographicCarrington, Helioprojective])
+def test_observer_in_heeq(frame_class):
+    # An observer provided in HGS Cartesian (i.e., HEEQ) should be converted to HGS spherical
+    obs_heeq = HeliographicStonyhurst((3, 4, 12)*u.AU, representation_type='cartesian')
+    frame = frame_class(observer=obs_heeq)
+    assert issubclass(frame.observer.representation_type, SphericalRepresentation)
+    assert_quantity_allclose(frame.observer.radius, 13*u.AU)

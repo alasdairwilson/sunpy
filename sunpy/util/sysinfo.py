@@ -1,149 +1,172 @@
 """
 This module provides functions to retrieve system information.
 """
-import datetime
 import platform
+from collections import defaultdict
+from importlib.metadata import PackageNotFoundError, version, requires, distribution
 
-from sunpy.extern.distro import linux_distribution
+from packaging.markers import Marker
+from packaging.requirements import Requirement
 
-__all__ = ['get_sys_dict', 'system_info']
+import sunpy.extern.distro as distro
+
+__all__ = ['system_info', 'find_dependencies', 'missing_dependencies_by_extra']
 
 
-def get_sys_dict():
+def get_requirements(package):
     """
-    Test which packages are installed on system.
+    This wraps `importlib.metadata.requires` to not be garbage.
+
+    Parameters
+    ----------
+    package : str
+        Package you want requirements for.
 
     Returns
     -------
     `dict`
-        A dictionary containing the programs and versions installed on this machine.
+        A dictionary of requirements with keys being the extra requirement group names.
+        The values are a nested dictionary with keys being the package names and
+        values being the `packaging.requirements.Requirement` objects.
     """
-    try:
-        from sunpy.version import version as sunpy_version
-    except ImportError:
-        sunpy_version = 'Missing sunpy version.'
+    requirements: list = requires(package)
+    requires_dict = defaultdict(dict)
+    for requirement in requirements:
+        req = Requirement(requirement)
+        package_name, package_marker = req.name, req.marker
+        if package_marker and "extra ==" in str(package_marker):
+            group = str(package_marker).split("extra == ")[1].strip('"').strip("'").strip()
+        else:
+            group = "required"
+        # De-duplicate (the same package could appear more than once in the extra == 'all' group)
+        if package_name in requires_dict[group]:
+            continue
+        requires_dict[group][package_name] = req
+    return requires_dict
 
-    # Dependencies
-    try:
-        from numpy import __version__ as numpy_version
-    except ImportError:
-        numpy_version = "NOT INSTALLED"
 
-    try:
-        from scipy import __version__ as scipy_version
-    except ImportError:
-        scipy_version = "NOT INSTALLED"
+def resolve_requirement_versions(package_versions):
+    """
+    Resolves a list of requirements for the same package.
 
-    try:
-        from matplotlib import __version__ as matplotlib_version
-    except ImportError:
-        matplotlib_version = "NOT INSTALLED"
+    Given a list of package details in the form of `packaging.requirements.Requirement`
+    objects, combine the specifier, extras, url and marker information to create
+    a new requirement object.
+    """
+    resolved = Requirement(str(package_versions[0]))
 
-    try:
-        from astropy import __version__ as astropy_version
-    except ImportError:
-        astropy_version = "NOT INSTALLED"
+    for package_version in package_versions[1:]:
+        resolved.specifier = resolved.specifier & package_version.specifier
+        resolved.extras = resolved.extras.union(package_version.extras)
+        resolved.url = resolved.url or package_version.url
+        if resolved.marker and package_version.marker:
+            resolved.marker = Marker(f"{resolved.marker} or {package_version.marker}")
+        elif package_version.marker:
+            resolved.marker = package_version.marker
 
-    try:
-        from pandas import __version__ as pandas_version
-    except ImportError:
-        pandas_version = "NOT INSTALLED"
+    return resolved
 
-    try:
-        from bs4 import __version__ as bs4_version
-    except ImportError:
-        bs4_version = "NOT INSTALLED"
 
-    try:
-        from PyQt4.QtCore import PYQT_VERSION_STR as pyqt4_version
-    except ImportError:
-        pyqt4_version = "NOT INSTALLED"
+def format_requirement_string(requirement):
+    formatted_string = f"Missing {requirement}"
+    formatted_string = formatted_string.replace("or extra ==", "or").strip()
+    return formatted_string
 
-    try:
-        from PyQt5.QtCore import PYQT_VERSION_STR as pyqt5_version
-    except ImportError:
-        pyqt5_version = "NOT INSTALLED"
 
-    try:
-        from zeep import __version__ as zeep_version
-    except ImportError:
-        zeep_version = "NOT INSTALLED"
+def find_dependencies(package="sunpy", extras=None):
+    """
+    List installed and missing dependencies.
 
-    try:
-        from sqlalchemy import __version__ as sqlalchemy_version
-    except ImportError:
-        sqlalchemy_version = "NOT INSTALLED"
+    Given a package and, optionally, a tuple of extras, identify any packages
+    which should be installed to match the requirements and return any which are
+    missing.
+    """
+    requirements = get_requirements(package)
+    installed_requirements = {}
+    missing_requirements = defaultdict(list)
+    extras = extras or ["required"]
+    for group in requirements:
+        if group not in extras:
+            continue
+        for package, package_details in requirements[group].items():
+            try:
+                package_version = version(package)
+                installed_requirements[package] = package_version
+            except PackageNotFoundError:
+                missing_requirements[package].append(package_details)
+    for package, package_versions in missing_requirements.items():
+        missing_requirements[package] = format_requirement_string(
+            resolve_requirement_versions(package_versions))
+    return missing_requirements, installed_requirements
 
-    try:
-        from parfive import __version__ as parfive_version
-    except ImportError:
-        parfive_version = "NOT INSTALLED"
 
-    try:
-        from drms import __version__ as drms_version
-    except ImportError:
-        drms_version = "NOT INSTALLED"
+def missing_dependencies_by_extra(package="sunpy", exclude_extras=None):
+    """
+    Get all the specified extras for a package and report any missing dependencies.
 
-    sys_prop = {'Time': datetime.datetime.utcnow().strftime("%A, %d. %B %Y %I:%M%p UT"),
-                'System': platform.system(), 'Processor': platform.processor(),
-                'SunPy': sunpy_version,
-                'Arch': platform.architecture()[0], "Python": platform.python_version(),
-                'NumPy': numpy_version, 'PyQt5': pyqt5_version,
-                'SciPy': scipy_version, 'matplotlib': matplotlib_version,
-                'Astropy': astropy_version, 'Pandas': pandas_version,
-                'beautifulsoup': bs4_version, 'PyQt4': pyqt4_version,
-                'Zeep': zeep_version, 'Sqlalchemy': sqlalchemy_version,
-                'parfive': parfive_version, 'drms': drms_version
-                }
-    return sys_prop
+    This function will also return a "required" item in the dict which is the
+    dependencies associated with no extras.
+    """
+    exclude_extras = exclude_extras or []
+    requirements = get_requirements(package)
+    missing_dependencies = {}
+    for group in requirements.keys():
+        if group in exclude_extras:
+            continue
+        missing_dependencies[group] = find_dependencies(package, [group])[0]
+    return missing_dependencies
+
+
+def get_extra_groups(groups, exclude_extras):
+    return list(set(groups) - set(exclude_extras))
+
+
+def get_keys_list(dictionary, sort=True):
+    keys = [*dictionary.keys()]
+    if sort:
+        return sorted(keys)
+    return keys
 
 
 def system_info():
     """
-    Takes dictionary from sys_info() and prints the contents in an attractive
-    fashion.
+    Prints ones' system info in an "attractive" fashion.
     """
-    sys_prop = get_sys_dict()
-
-    # title
+    requirements = get_requirements("sunpy")
+    groups = get_keys_list(requirements)
+    extra_groups = get_extra_groups(groups, ['all', 'dev'])
+    base_reqs = get_keys_list(requirements['required'])
+    extra_reqs = get_keys_list(requirements['all'])
+    missing_packages, installed_packages = find_dependencies(package="sunpy", extras=extra_groups)
+    extra_prop = {"System": platform.system(),
+                  "Arch": f"{platform.architecture()[0]}, ({platform.processor()})",
+                  "Python": platform.python_version(),
+                  "sunpy": version("sunpy")}
+    sys_prop = {**installed_packages, **missing_packages, **extra_prop}
     print("==============================")
-    print("SunPy Installation Information")
-    print("==============================\n")
-
-    # general properties
-    print("#######")
+    print("sunpy Installation Information")
+    print("==============================")
+    print()
     print("General")
     print("#######")
-    # OS and architecture information
-
-    for sys_info in ['Time', 'System', 'Processor', 'Arch', 'SunPy']:
-        print('{} : {}'.format(sys_info, sys_prop[sys_info]))
-
     if sys_prop['System'] == "Linux":
-        distro = " ".join(linux_distribution())
-        print("OS: {} (Linux {} {})".format(distro, platform.release(), sys_prop['Processor']))
+        print(f"OS: {distro.name()} ({distro.version()}, Linux {platform.release()})")
     elif sys_prop['System'] == "Darwin":
-        print("OS: Mac OS X {} ({})".format(platform.mac_ver()[0], sys_prop['Processor']))
+        print(f"OS: Mac OS {platform.mac_ver()[0]}")
     elif sys_prop['System'] == "Windows":
-        print("OS: Windows {} {} ({})".format(platform.release(), platform.version(),
-                                                 sys_prop['Processor']))
+        print(f"OS: Windows {platform.release()} {platform.version()}")
     else:
-        print("Unknown OS ({})".format(sys_prop['Processor']))
-
-    print("\n")
-    # required libraries
-    print("##################")
-    print("Required Libraries")
-    print("##################")
-
-    for sys_info in ['Python', 'NumPy', 'SciPy', 'matplotlib', 'Astropy', 'Pandas', 'parfive']:
-        print('{}: {}'.format(sys_info, sys_prop[sys_info]))
-
-    print("\n")
-    # recommended
+        print("Unknown OS")
+    for sys_info in ['Arch', 'sunpy']:
+        print(f'{sys_info}: {sys_prop[sys_info]}')
+    print(f'Installation path: {distribution("sunpy")._path}')
+    print()
+    print("Required Dependencies")
     print("#####################")
-    print("Recommended Libraries")
+    for req in base_reqs:
+        print(f'{req}: {sys_prop[req]}')
+    print()
+    print("Optional Dependencies")
     print("#####################")
-
-    for sys_info in ['beautifulsoup', 'PyQt4', 'PyQt5', 'Zeep', 'Sqlalchemy', 'drms']:
-        print('{}: {}'.format(sys_info, sys_prop[sys_info]))
+    for extra_req in extra_reqs:
+        print(f'{extra_req}: {sys_prop[extra_req]}')

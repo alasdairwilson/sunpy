@@ -5,13 +5,13 @@
 
 """Utilities for determining application-specific dirs.
 
-See <https://github.com/ActiveState/appdirs> for details and usage.
+See <http://github.com/ActiveState/appdirs> for details and usage.
 """
 # Dev Notes:
 # - MSDN on where to store app data files:
 #   http://support.microsoft.com/default.aspx?scid=kb;en-us;310294#XSLTH3194121123120121120120
 # - Mac OS X: http://developer.apple.com/documentation/MacOSX/Conceptual/BPFileSystem/index.html
-# - XDG spec for Un*x: https://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
+# - XDG spec for Un*x: http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
 
 __version__ = "1.4.4"
 __version_info__ = tuple(int(segment) for segment in __version__.split("."))
@@ -28,18 +28,17 @@ if PY3:
 if sys.platform.startswith('java'):
     import platform
     os_name = platform.java_ver()[3][0]
-    if os_name.startswith('Windows'): # "Windows XP", "Windows 7", etc.
+    if os_name.startswith('Windows'):  # "Windows XP", "Windows 7", etc.
         system = 'win32'
-    elif os_name.startswith('Mac'): # "Mac OS X", etc.
+    elif os_name.startswith('Mac'):  # "Mac OS X", etc.
         system = 'darwin'
-    else: # "Linux", "SunOS", "FreeBSD", etc.
+    else:  # "Linux", "SunOS", "FreeBSD", etc.
         # Setting this to "linux2" is not ideal, but only Windows or Mac
         # are actually checked for and the rest of the module expects
         # *sys.platform* style strings.
         system = 'linux2'
 else:
     system = sys.platform
-
 
 
 def user_data_dir(appname=None, appauthor=None, version=None, roaming=False):
@@ -185,19 +184,15 @@ def user_config_dir(appname=None, appauthor=None, version=None, roaming=False):
             for a discussion of issues.
 
     Typical user config directories are:
-        Mac OS X:               ~/Library/Preferences/<AppName>
+        Mac OS X:               same as user_data_dir
         Unix:                   ~/.config/<AppName>     # or in $XDG_CONFIG_HOME, if defined
         Win *:                  same as user_data_dir
 
     For Unix, we follow the XDG spec and support $XDG_CONFIG_HOME.
     That means, by default "~/.config/<AppName>".
     """
-    if system == "win32":
+    if system in ["win32", "darwin"]:
         path = user_data_dir(appname, appauthor, None, roaming)
-    elif system == 'darwin':
-        path = os.path.expanduser('~/Library/Preferences/')
-        if appname:
-            path = os.path.join(path, appname)
     else:
         path = os.getenv('XDG_CONFIG_HOME', os.path.expanduser("~/.config"))
         if appname:
@@ -237,14 +232,10 @@ def site_config_dir(appname=None, appauthor=None, version=None, multipath=False)
 
     WARNING: Do not use this on Windows. See the Vista-Fail note above for why.
     """
-    if system == 'win32':
+    if system in ["win32", "darwin"]:
         path = site_data_dir(appname, appauthor)
         if appname and version:
             path = os.path.join(path, version)
-    elif system == 'darwin':
-        path = os.path.expanduser('/Library/Preferences')
-        if appname:
-            path = os.path.join(path, appname)
     else:
         # XDG default for $XDG_CONFIG_DIRS
         # only first, if multipath is False
@@ -412,10 +403,11 @@ def user_log_dir(appname=None, appauthor=None, version=None, opinion=True):
     return path
 
 
-class AppDirs:
+class AppDirs(object):
     """Convenience wrapper for getting application dirs."""
+
     def __init__(self, appname=None, appauthor=None, version=None,
-            roaming=False, multipath=False):
+                 roaming=False, multipath=False):
         self.appname = appname
         self.appauthor = appauthor
         self.version = version
@@ -440,7 +432,7 @@ class AppDirs:
     @property
     def site_config_dir(self):
         return site_config_dir(self.appname, self.appauthor,
-                             version=self.version, multipath=self.multipath)
+                               version=self.version, multipath=self.multipath)
 
     @property
     def user_cache_dir(self):
@@ -458,7 +450,7 @@ class AppDirs:
                             version=self.version)
 
 
-#---- internal support stuff
+# ---- internal support stuff
 
 def _get_win_folder_from_registry(csidl_name):
     """This is a fallback technique at best. I'm not sure if using the
@@ -466,9 +458,9 @@ def _get_win_folder_from_registry(csidl_name):
     names.
     """
     if PY3:
-      import winreg as _winreg
+        import winreg as _winreg
     else:
-      import _winreg
+        import _winreg
 
     shell_folder_name = {
         "CSIDL_APPDATA": "AppData",
@@ -537,6 +529,7 @@ def _get_win_folder_with_ctypes(csidl_name):
 
     return buf.value
 
+
 def _get_win_folder_with_jna(csidl_name):
     import array
     from com.sun import jna
@@ -563,6 +556,7 @@ def _get_win_folder_with_jna(csidl_name):
 
     return dir
 
+
 if system == "win32":
     try:
         import win32com.shell
@@ -579,7 +573,7 @@ if system == "win32":
                 _get_win_folder = _get_win_folder_from_registry
 
 
-#---- self test code
+# ---- self test code
 
 if __name__ == "__main__":
     appname = "MyApp"
@@ -598,19 +592,19 @@ if __name__ == "__main__":
     print("-- app dirs (with optional 'version')")
     dirs = AppDirs(appname, appauthor, version="1.0")
     for prop in props:
-        print("{}: {}".format(prop, getattr(dirs, prop)))
+        print("%s: %s" % (prop, getattr(dirs, prop)))
 
     print("\n-- app dirs (without optional 'version')")
     dirs = AppDirs(appname, appauthor)
     for prop in props:
-        print("{}: {}".format(prop, getattr(dirs, prop)))
+        print("%s: %s" % (prop, getattr(dirs, prop)))
 
     print("\n-- app dirs (without optional 'appauthor')")
     dirs = AppDirs(appname)
     for prop in props:
-        print("{}: {}".format(prop, getattr(dirs, prop)))
+        print("%s: %s" % (prop, getattr(dirs, prop)))
 
     print("\n-- app dirs (with disabled 'appauthor')")
     dirs = AppDirs(appname, appauthor=False)
     for prop in props:
-        print("{}: {}".format(prop, getattr(dirs, prop)))
+        print("%s: %s" % (prop, getattr(dirs, prop)))

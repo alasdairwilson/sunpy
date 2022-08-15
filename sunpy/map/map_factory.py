@@ -1,33 +1,32 @@
 import os
-from collections import OrderedDict
-import warnings
 import pathlib
-import glob
+from collections import OrderedDict
+from urllib.request import Request
 
 import numpy as np
+
 import astropy.io.fits
 from astropy.wcs import WCS
 
 from sunpy import log
-from sunpy.map.mapbase import GenericMap, MapMetaValidationError
-from sunpy.map.compositemap import CompositeMap
-from sunpy.map.mapsequence import MapSequence
-
 from sunpy.data import cache
-
 from sunpy.io.file_tools import read_file
 from sunpy.io.header import FileHeader
-
+from sunpy.map.compositemap import CompositeMap
+from sunpy.map.mapbase import GenericMap, MapMetaValidationError
+from sunpy.map.mapsequence import MapSequence
 from sunpy.util import expand_list
-from sunpy.util import SunpyUserWarning
+from sunpy.util.datatype_factory_base import (
+    BasicRegistrationFactory,
+    MultipleMatchError,
+    NoMatchError,
+    ValidationFunctionError,
+)
+from sunpy.util.exceptions import NoMapsInFileError, warn_user
+from sunpy.util.functools import seconddispatch
+from sunpy.util.io import is_url, parse_path, possibly_a_path
 from sunpy.util.metadata import MetaDict
 from sunpy.util.types import DatabaseEntryType
-
-from sunpy.util.datatype_factory_base import BasicRegistrationFactory
-from sunpy.util.datatype_factory_base import NoMatchError
-from sunpy.util.datatype_factory_base import MultipleMatchError
-from sunpy.util.datatype_factory_base import ValidationFunctionError
-from urllib.request import urlopen
 
 SUPPORTED_ARRAY_TYPES = (np.ndarray,)
 try:
@@ -41,11 +40,42 @@ __all__ = ['Map', 'MapFactory']
 
 class MapFactory(BasicRegistrationFactory):
     """
-    Map(\\*args, \\*\\*kwargs)
+    A factory for generating coordinate aware 2D images.
 
-    Map factory class.  Used to create a variety of Map objects.  Valid map types
-    are specified by registering them with the factory.
+    This factory takes a variety of inputs, such as file paths, wildcard
+    patterns or (data, header) pairs.
 
+    Depending on the input different return types are possible.
+
+    Parameters
+    ----------
+    \\*inputs
+        Inputs to parse for map objects. See the examples section for a
+        detailed list of accepted inputs.
+
+    sequence : `bool`, optional
+        Return a `sunpy.map.MapSequence` object comprised of all the parsed maps.
+
+    composite : `bool`, optional
+        Return a `sunpy.map.CompositeMap` object comprised of all the parsed maps.
+
+    Returns
+    -------
+    `sunpy.map.GenericMap`
+        If the input results in a singular map object, then that is returned.
+
+    `list` of `~sunpy.map.GenericMap`
+        If multiple inputs are given and ``sequence=False`` and ``composite=False``
+        (the default) then a list of `~sunpy.map.GenericMap` objects will be
+        returned.
+
+    `sunpy.map.MapSequence`
+        If the input corresponds to multiple maps and ``sequence=True`` is set,
+        then a `~sunpy.map.MapSequence` object is returned.
+
+    `sunpy.map.CompositeMap`
+        If the input corresponds to multiple maps and ``composite=True`` is set,
+        then a `~sunpy.map.CompositeMap` object is returned.
 
     Examples
     --------
@@ -70,16 +100,16 @@ class MapFactory(BasicRegistrationFactory):
     * data, wcs object, in tuple
 
     >>> from astropy.wcs import WCS
-    >>> wcs = WCS(sunpy.data.sample.AIA_171_ROLL_IMAGE)     # doctest: +REMOTE_DATA
-    >>> data = fits.getdata(sunpy.data.sample.AIA_171_ROLL_IMAGE)    # doctest: +REMOTE_DATA
-    >>> mymap = sunpy.map.Map((data, wcs))    # doctest: +REMOTE_DATA
+    >>> wcs = WCS(sunpy.data.sample.AIA_171_ROLL_IMAGE)  # doctest: +SKIP
+    >>> data = fits.getdata(sunpy.data.sample.AIA_171_ROLL_IMAGE)  # doctest: +SKIP
+    >>> mymap = sunpy.map.Map((data, wcs))  # doctest: +SKIP
 
     * data, wcs object, not in tuple
 
     >>> from astropy.wcs import WCS
-    >>> wcs = WCS(sunpy.data.sample.AIA_171_ROLL_IMAGE)     # doctest: +REMOTE_DATA
-    >>> data = fits.getdata(sunpy.data.sample.AIA_171_ROLL_IMAGE)    # doctest: +REMOTE_DATA
-    >>> mymap = sunpy.map.Map(data, wcs)   # doctest: +REMOTE_DATA
+    >>> wcs = WCS(sunpy.data.sample.AIA_171_ROLL_IMAGE)  # doctest: +SKIP
+    >>> data = fits.getdata(sunpy.data.sample.AIA_171_ROLL_IMAGE)  # doctest: +SKIP
+    >>> mymap = sunpy.map.Map(data, wcs)  # doctest: +SKIP
 
     * File names
 
@@ -116,7 +146,7 @@ class MapFactory(BasicRegistrationFactory):
     * Any mixture of the above not in a list
 
     >>> mymap = sunpy.map.Map(((data, header), data2, header2, 'file1.fits', url_str, 'eit_*.fits'))  # doctest: +SKIP
-    """  # noqa
+    """
 
     def _read_file(self, fname, **kwargs):
         """
@@ -142,6 +172,10 @@ class MapFactory(BasicRegistrationFactory):
                 data = filedata
                 meta = MetaDict(filemeta)
                 new_pairs.append((data, meta))
+
+        if not new_pairs:
+            raise NoMapsInFileError(f"Found no HDUs with >= 2D data in '{fname}'.")
+
         return new_pairs
 
     def _validate_meta(self, meta):
@@ -155,9 +189,9 @@ class MapFactory(BasicRegistrationFactory):
         else:
             return False
 
-    def _parse_args(self, *args, **kwargs):
+    def _parse_args(self, *args, silence_errors=False, **kwargs):
         """
-        Parses an args list for data-header pairs.
+        Parses an args list into data-header pairs.
 
         args can contain any mixture of the following entries:
         * tuples of data,header
@@ -170,8 +204,8 @@ class MapFactory(BasicRegistrationFactory):
         * url, which will be downloaded and read
         * lists containing any of the above.
 
-        Example
-        -------
+        Examples
+        --------
         self._parse_args(data, header,
                          (data, header),
                          ['file1', 'file2', 'file3'],
@@ -179,69 +213,81 @@ class MapFactory(BasicRegistrationFactory):
                          'directory1',
                          '*.fits')
         """
-        data_header_pairs = list()
-        already_maps = list()
-
         # Account for nested lists of items
         args = expand_list(args)
 
-        # For each of the arguments, handle each of the cases
+        # Sanitise the input so that each 'type' of input corresponds to a different
+        # class, so single dispatch can be used later
+        nargs = len(args)
         i = 0
-        while i < len(args):
-
+        while i < nargs:
             arg = args[i]
-
-            # Data-header or data-WCS pair
             if isinstance(arg, SUPPORTED_ARRAY_TYPES):
-                arg_header = args[i+1]
-                if isinstance(arg_header, WCS):
-                    arg_header = args[i+1].to_header()
-
-                if self._validate_meta(arg_header):
-                    pair = (args[i], OrderedDict(arg_header))
-                    data_header_pairs.append(pair)
-                    i += 1    # an extra increment to account for the data-header pairing
-
-            # A database Entry
-            elif isinstance(arg, DatabaseEntryType):
-                data_header_pairs += self._read_file(arg.path, **kwargs)
-
-            # Already a Map
-            elif isinstance(arg, GenericMap):
-                already_maps.append(arg)
-
-            # URL
-            elif isinstance(arg, str) and _is_url(arg):
-                url = arg
-                path = str(cache.download(url).absolute())
-                pairs = self._read_file(path, **kwargs)
-                data_header_pairs += pairs
-
-            # File system path (file or directory or glob)
-            elif _possibly_a_path(arg):
-                path = pathlib.Path(arg).expanduser()
-                if _is_file(path):
-                    pairs = self._read_file(path, **kwargs)
-                    data_header_pairs += pairs
-                elif _is_dir(path):
-                    for afile in sorted(path.glob('*')):
-                        data_header_pairs += self._read_file(afile, **kwargs)
-                elif glob.glob(os.path.expanduser(arg)):
-                    for afile in sorted(glob.glob(os.path.expanduser(arg))):
-                        data_header_pairs += self._read_file(afile, **kwargs)
-
-                else:
-                    raise ValueError(f'Did not find any files at {arg}')
-
-            else:
-                raise ValueError(f"Invalid input: {arg}")
-
+                # The next two items are data and a header
+                data = args.pop(i)
+                header = args.pop(i)
+                args.insert(i, (data, header))
+                nargs -= 1
+            elif isinstance(arg, str) and is_url(arg):
+                # Repalce URL string with a Request object to dispatch on later
+                args[i] = Request(arg)
+            elif possibly_a_path(arg):
+                # Repalce path strings with Path objects
+                args[i] = pathlib.Path(arg)
             i += 1
 
-        # TODO:
-        # In the end, if there are already maps it should be put in the same
-        # order as the input, currently they are not.
-        return data_header_pairs, already_maps
+        # Parse the arguments
+        # Note that this list can also contain GenericMaps if they are directly given to the factory
+        data_header_pairs = []
+        for arg in args:
+            try:
+                data_header_pairs += self._parse_arg(arg, **kwargs)
+            except NoMapsInFileError as e:
+                if not silence_errors:
+                    raise
+                warn_user(f"One of the arguments failed to parse with error: {e}")
+
+        return data_header_pairs
+
+    # Note that post python 3.8 this can be @functools.singledispatchmethod
+    @seconddispatch
+    def _parse_arg(self, arg, **kwargs):
+        """
+        Take a factory input and parse into (data, header) pairs.
+        Must return a list, even if only one pair is returned.
+        """
+        raise ValueError(f"Invalid input: {arg}")
+
+    @_parse_arg.register(tuple)
+    def _parse_tuple(self, arg, **kwargs):
+        # Data-header or data-WCS pair
+        data, header = arg
+        if isinstance(header, WCS):
+            header = header.to_header()
+
+        pair = data, header
+        if self._validate_meta(header):
+            pair = (data, OrderedDict(header))
+        return [pair]
+
+    @_parse_arg.register(DatabaseEntryType)
+    def _parse_dbase(self, arg, **kwargs):
+        return self._read_file(arg.path, **kwargs)
+
+    @_parse_arg.register(GenericMap)
+    def _parse_map(self, arg, **kwargs):
+        return [arg]
+
+    @_parse_arg.register(Request)
+    def _parse_url(self, arg, **kwargs):
+        url = arg.full_url
+        path = str(cache.download(url).absolute())
+        pairs = self._read_file(path, **kwargs)
+        return pairs
+
+    @_parse_arg.register(pathlib.Path)
+    def _parse_path(self, arg, **kwargs):
+        return parse_path(arg, self._read_file, **kwargs)
 
     def __call__(self, *args, composite=False, sequence=False, silence_errors=False, **kwargs):
         """ Method for running the factory. Takes arbitrary arguments and
@@ -269,14 +315,15 @@ class MapFactory(BasicRegistrationFactory):
         Extra keyword arguments are passed through to `sunpy.io.read_file` such
         as `memmap` for FITS files.
         """
-
-        data_header_pairs, already_maps = self._parse_args(*args, **kwargs)
-
+        data_header_pairs = self._parse_args(*args, silence_errors=silence_errors, **kwargs)
         new_maps = list()
 
         # Loop over each registered type and check to see if WidgetType
         # matches the arguments.  If it does, use that type.
         for pair in data_header_pairs:
+            if isinstance(pair, GenericMap):
+                new_maps.append(pair)
+                continue
             data, header = pair
             meta = MetaDict(header)
 
@@ -287,9 +334,7 @@ class MapFactory(BasicRegistrationFactory):
                     ValidationFunctionError, MapMetaValidationError) as e:
                 if not silence_errors:
                     raise
-                warnings.warn(f"One of the data, header pairs failed to validate with: {e}")
-
-        new_maps += already_maps
+                warn_user(f"One of the data, header pairs failed to validate with: {e}")
 
         if not len(new_maps):
             raise RuntimeError('No maps loaded')
@@ -325,9 +370,10 @@ class MapFactory(BasicRegistrationFactory):
             else:
                 candidate_widget_types = [self.default_widget_type]
         elif n_matches > 1:
-            raise MultipleMatchError("Too many candidate types identified ({})."
-                                     "Specify enough keywords to guarantee unique type"
-                                     "identification.".format(n_matches))
+            raise MultipleMatchError("Too many candidate types identified "
+                                     f"({candidate_widget_types}). "
+                                     "Specify enough keywords to guarantee unique type "
+                                     "identification.")
 
         # Only one is found
         WidgetType = candidate_widget_types[0]
@@ -335,60 +381,19 @@ class MapFactory(BasicRegistrationFactory):
         return WidgetType(data, meta, **kwargs)
 
 
-def _is_url(arg):
-    try:
-        urlopen(arg)
-    except Exception:
-        return False
-    return True
-
-
-def _possibly_a_path(arg):
-    """
-    Check if arg can be coerced into a Path object.
-    Does *not* check if the path exists.
-    """
-    try:
-        pathlib.Path(arg)
-        return True
-    except Exception:
-        return False
-
-
-# In python<3.8 paths with un-representable chars (ie. '*' on windows)
-# raise an error, so make our own version that returns False instead of
-# erroring. These can be removed when we support python >= 3.8
-# https://docs.python.org/3/library/pathlib.html#methods
-def _is_file(path):
-    try:
-        return path.is_file()
-    except Exception:
-        return False
-
-
-def _is_dir(path):
-    try:
-        return path.is_dir()
-    except Exception:
-        return False
-
-
 class InvalidMapInput(ValueError):
     """Exception to raise when input variable is not a Map instance and does
     not point to a valid Map input file."""
-    pass
 
 
 class InvalidMapType(ValueError):
     """Exception to raise when an invalid type of map is requested with Map
     """
-    pass
 
 
 class NoMapsFound(ValueError):
     """Exception to raise when input does not point to any valid maps or files
     """
-    pass
 
 
 Map = MapFactory(registry=GenericMap._registry, default_widget_type=GenericMap,

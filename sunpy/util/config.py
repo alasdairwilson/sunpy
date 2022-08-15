@@ -2,13 +2,15 @@
 This module provides SunPy's configuration file functionality.
 """
 import os
+import shutil
 import configparser
 from pathlib import Path
 
 import sunpy
 from sunpy.extern.appdirs import AppDirs
+from sunpy.util.exceptions import warn_user
 
-__all__ = ['load_config', 'print_config', 'CONFIG_DIR']
+__all__ = ['load_config', 'copy_default_config', 'print_config', 'CONFIG_DIR']
 
 # This is to avoid creating a new config dir for each new dev version.
 # We use AppDirs to locate and create the config directory.
@@ -146,3 +148,35 @@ def _get_user_configdir():
     if not _is_writable_dir(configdir):
         raise RuntimeError(f'Could not write to SUNPY_CONFIGDIR="{configdir}"')
     return configdir
+
+
+def copy_default_config(overwrite=False):
+    """
+    Copies the default sunpy config file to the user's config directory.
+
+    Parameters
+    ----------
+    overwrite : `bool`
+        If True, existing config file will be overwritten.
+    """
+    config_filename = 'sunpyrc'
+    config_file = Path(sunpy.__file__).parent / 'data' / config_filename
+    user_config_dir = Path(_get_user_configdir())
+    user_config_file = user_config_dir / config_filename
+
+    if not _is_writable_dir(user_config_dir):
+        raise RuntimeError(f'Could not write to SunPy config directory {user_config_dir}')
+
+    if user_config_file.exists():
+        if overwrite:
+            message = "User config file already exists. " \
+                      "This will be overwritten with a backup written in the same location."
+            warn_user(message)
+            os.rename(str(user_config_file), str(user_config_file) + ".bak")
+            shutil.copyfile(config_file, user_config_file)
+        else:
+            message = "User config file already exists. " \
+                      "To overwrite it use `copy_default_config(overwrite=True)`"
+            warn_user(message)
+    else:
+        shutil.copyfile(config_file, user_config_file)

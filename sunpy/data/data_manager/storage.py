@@ -3,11 +3,10 @@ Storage module contains the abstract implementation of storage
 for `sunpy.data.data_manager.Cache` and a concrete implementation
 using sqlite.
 """
-import os
 import sqlite3
 from abc import ABCMeta, abstractmethod
-from contextlib import contextmanager
 from pathlib import Path
+from contextlib import contextmanager
 
 __all__ = [
     'StorageProviderBase',
@@ -28,9 +27,9 @@ class StorageProviderBase(metaclass=ABCMeta):
 
         Parameters
         ----------
-        key: `str`
+        key : `str`
             The key/column name of the field.
-        value: `str`
+        value : `str`
             The value associated with the key of the entry.
 
         Returns
@@ -41,9 +40,8 @@ class StorageProviderBase(metaclass=ABCMeta):
         Raises
         ------
         ``KeyError``
-             KeyError is raised if key does not exist.
+            KeyError is raised if key does not exist.
         """
-        raise NotImplementedError
 
     @abstractmethod
     def delete_by_key(self, key, value):
@@ -52,17 +50,16 @@ class StorageProviderBase(metaclass=ABCMeta):
 
         Parameters
         ----------
-        key: `str`
+        key : `str`
             The key/column name of the field.
-        value: `str`
+        value : `str`
             The value associated with the key of the entry.
 
         Raises
         ------
         ``KeyError``
-             KeyError is raised if key does not exist.
+            KeyError is raised if key does not exist.
         """
-        raise NotImplementedError
 
     @abstractmethod
     def store(self, details):
@@ -71,10 +68,9 @@ class StorageProviderBase(metaclass=ABCMeta):
 
         Parameters
         ----------
-        details: `dict`
+        details : `dict`
             Details to be stored.
         """
-        raise NotImplementedError
 
 
 class InMemStorage(StorageProviderBase):
@@ -126,16 +122,12 @@ class SqliteStorage(StorageProviderBase):
             self._setup()
 
     def _setup(self):
-        schema = ' text, '.join(self.COLUMN_NAMES) + ' text'
         with self.connection(commit=True) as conn:
-            # Do this in a try...except to prevent race conditions in the tests
-            try:
-                conn.execute(f'''CREATE TABLE {self._table_name}
-                                ({schema})''')
-            except sqlite3.OperationalError as exc:
-                if "cache_storage already exists" in str(exc):
-                    return
-                raise exc
+            self._create_table(conn)
+
+    def _create_table(self, conn):
+        schema = ' text, '.join(self.COLUMN_NAMES) + ' text'
+        conn.execute(f'''CREATE TABLE IF NOT EXISTS {self._table_name} ({schema})''')
 
     @contextmanager
     def connection(self, commit=False):
@@ -144,10 +136,11 @@ class SqliteStorage(StorageProviderBase):
 
         Parameters
         ----------
-        commit: `bool`
+        commit : `bool`
             Whether to commit after succesful execution of db command.
         """
         conn = sqlite3.connect(str(self._db_path))
+        self._create_table(conn)
         try:
             yield conn
             if commit:

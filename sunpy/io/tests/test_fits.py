@@ -1,162 +1,184 @@
-import os
+import mmap
 from pathlib import Path
 from collections import OrderedDict
 
+import numpy as np
 import pytest
 
 import astropy.io.fits as fits
-from astropy.utils.exceptions import AstropyUserWarning
 
-import sunpy.data.test
-import sunpy.io.fits
+from sunpy.data.test import get_test_filepath, test_data_filenames
 from sunpy.data.test.waveunit import MEDN_IMAGE, MQ_IMAGE, NA_IMAGE, SVSM_IMAGE
-from sunpy.io.fits import extract_waveunit, get_header, header_to_fits
-from sunpy.util import MetaDict, SunpyUserWarning
+from sunpy.io import _fits
+from sunpy.util import MetaDict, SunpyMetadataWarning
 
-testpath = sunpy.data.test.rootdir
-
-RHESSI_IMAGE = os.path.join(testpath, 'hsi_image_20101016_191218.fits')
-EIT_195_IMAGE = os.path.join(testpath, 'EIT/efz20040301.000010_s.fits')
-AIA_171_IMAGE = os.path.join(testpath, 'aia_171_level1.fits')
-SWAP_LEVEL1_IMAGE = os.path.join(testpath, 'SWAP/resampled1_swap.fits')
-
-
-def read_hdus():
-    pairs = sunpy.io.fits.read(RHESSI_IMAGE)
-    assert len(pairs) == 4
+TEST_RHESSI_IMAGE = get_test_filepath('hsi_image_20101016_191218.fits')
+TEST_AIA_IMAGE = get_test_filepath('aia_171_level1.fits')
+TEST_EIT_HEADER = get_test_filepath('EIT_header/efz20040301.000010_s.header')
+TEST_SWAP_HEADER = get_test_filepath('SWAP/resampled1_swap.header')
+# Some of the tests images contain an invalid BLANK keyword
+# ignore the warning raised by this
+pytestmark = pytest.mark.filterwarnings("ignore:Invalid 'BLANK' keyword in header")
 
 
-def read_hdu_int():
-    pairs = sunpy.io.fits.read(RHESSI_IMAGE, hdus=1)
-    assert len(pairs) == 1
+@pytest.mark.parametrize(
+    'fname, hdus, length',
+    [(TEST_RHESSI_IMAGE, None, 4),
+     (TEST_RHESSI_IMAGE, 1, 1),
+     (TEST_RHESSI_IMAGE, [1, 2], 2),
+     (TEST_RHESSI_IMAGE, range(0, 2), 2)]
+)
+def test_read_hdus(fname, hdus, length):
+    pairs = _fits.read(fname, hdus=hdus)
+    assert len(pairs) == length
 
 
-def read_hdus_list():
-    pairs = sunpy.io.fits.read(RHESSI_IMAGE, hdus=[1, 2])
-    assert len(pairs) == 2
-
-
-def read_hdus_gen():
-    pairs = sunpy.io.fits.read(RHESSI_IMAGE, hdus=range(0, 1))
-    assert len(pairs) == 2
-
-
-def test_extract_waveunit_missing_waveunit_key_and_missing_wavelnth_comment():
-    waveunit = extract_waveunit(get_header(RHESSI_IMAGE)[0])
-    assert waveunit is None
-
-
-def test_missing_waveunit_in_wavelnth_comment():
-    # the comment of the key WAVELNTH has the value
-    # '171 = Fe IX/X, 195 = Fe XII,' which contains no unit information
-    waveunit = extract_waveunit(get_header(EIT_195_IMAGE)[0])
-    assert waveunit is None
-
-
-def test_extract_waveunit_from_waveunit_key():
-    # the key WAVEUNIT can be accessed and returned directly
-    waveunit = extract_waveunit(get_header(AIA_171_IMAGE)[0])
-    assert waveunit == 'angstrom'
-
-
-def test_extract_waveunit_minus9():
-    # value of WAVEUNIT is -9
-    with pytest.warns(AstropyUserWarning, match='File may have been truncated'):
-        waveunit = extract_waveunit(get_header(MEDN_IMAGE)[0])
-    assert waveunit == 'nm'
-
-
-def test_extract_waveunit_minus10():
-    # value of WAVEUNIT is -10
-    with pytest.warns(AstropyUserWarning, match='File may have been truncated'):
-        waveunit = extract_waveunit(get_header(MQ_IMAGE)[0])
-    assert waveunit == 'angstrom'
-
-
-def test_extract_waveunit_waveunitcomment():
-    # comment of WAVEUNIT is: "in meters"
-    with pytest.warns(AstropyUserWarning, match='File may have been truncated'):
-        waveunit = extract_waveunit(get_header(NA_IMAGE)[0])
-    assert waveunit == 'm'
-
-
-def test_extract_waveunit_wavelnthcomment_brackets():
-    # WAVELNTH comment is: "[Angstrom] bandpass peak response"
-    waveunit = extract_waveunit(get_header(SWAP_LEVEL1_IMAGE)[0])
-    assert waveunit == 'angstrom'
-
-
-def test_extract_waveunit_wavelnthcomment_parentheses():
-    # WAVELNTH comment is: "Observed wavelength (nm)"
-    with pytest.warns(AstropyUserWarning, match='File may have been truncated'):
-        waveunit = extract_waveunit(get_header(SVSM_IMAGE)[0])
-    assert waveunit == 'nm'
+@pytest.mark.parametrize(
+    'fname, waveunit',
+    [(TEST_RHESSI_IMAGE, None),
+     (TEST_EIT_HEADER, None),
+     (TEST_AIA_IMAGE, 'angstrom'),
+     (MEDN_IMAGE, 'nm'),
+     (MQ_IMAGE, 'angstrom'),
+     (NA_IMAGE, 'm'),
+     (TEST_SWAP_HEADER, 'angstrom'),
+     (SVSM_IMAGE, 'nm')]
+)
+def test_extract_waveunit(fname, waveunit):
+    if Path(fname).suffix == '.header':
+        header = _fits.format_comments_and_history(fits.Header.fromtextfile(fname))
+    else:
+        header = _fits.get_header(fname)[0]
+    waveunit = _fits.extract_waveunit(header)
+    assert waveunit is waveunit
 
 
 def test_simple_write(tmpdir):
-    data, header = sunpy.io.fits.read(AIA_171_IMAGE)[0]
+    data, header = _fits.read(TEST_AIA_IMAGE)[0]
     outfile = tmpdir / "test.fits"
-    sunpy.io.fits.write(str(outfile), data, header)
+    _fits.write(str(outfile), data, header)
     assert outfile.exists()
 
 
 def test_extra_comment_write(tmpdir):
-    data, header = sunpy.io.fits.read(AIA_171_IMAGE)[0]
+    data, header = _fits.read(TEST_AIA_IMAGE)[0]
     header["KEYCOMMENTS"]["TEST"] = "Hello world"
     outfile = tmpdir / "test.fits"
-    sunpy.io.fits.write(str(outfile), data, header)
+    _fits.write(str(outfile), data, header)
     assert outfile.exists()
 
 
 def test_simple_write_compressed(tmpdir):
-    data, header = sunpy.io.fits.read(AIA_171_IMAGE)[0]
+    data, header = _fits.read(TEST_AIA_IMAGE)[0]
     outfile = tmpdir / "test.fits"
-    sunpy.io.fits.write(str(outfile), data, header, hdu_type=fits.CompImageHDU)
+    _fits.write(str(outfile), data, header, hdu_type=fits.CompImageHDU)
     assert outfile.exists()
     with fits.open(str(outfile)) as hdul:
         assert len(hdul) == 2
         assert isinstance(hdul[1], fits.CompImageHDU)
 
 
+def test_simple_write_compressed_difftypeinst(tmpdir):
+    # `hdu_type=fits.CompImageHDU` and `hdu_type=fits.CompImageHDU()`
+    # should produce identical FITS files
+    data, header = _fits.read(TEST_AIA_IMAGE)[0]
+    outfile_type = str(tmpdir / "test_type.fits")
+    outfile_inst = str(tmpdir / "test_inst.fits")
+    _fits.write(outfile_type, data, header, hdu_type=fits.CompImageHDU)
+    _fits.write(outfile_inst, data, header, hdu_type=fits.CompImageHDU())
+    assert fits.FITSDiff(outfile_type, outfile_inst, ignore_comments=['PCOUNT']).identical
+
+
+@pytest.mark.parametrize(
+    'kwargs, should_fail',
+    [({}, False),
+     ({'quantize_level': -32}, True)]
+)
+def test_simple_write_compressed_instance(tmpdir, kwargs, should_fail):
+    data, header = _fits.read(TEST_AIA_IMAGE)[0]
+    outfile = tmpdir / "test.fits"
+
+    # Ensure HDU instance is used correctly
+    hdu = fits.CompImageHDU(data=np.array([0.]), **kwargs)
+    hdu.header['HELLO'] = 'world'  # should be in the written file
+    hdu.header['TELESCOP'] = 'other'  # should be replaced with 'SDO/AIA'
+    hdu.header['NAXIS'] = 5  # should be replaced with 2
+    _fits.write(str(outfile), data, header, hdu_type=hdu)
+    assert outfile.exists()
+    with fits.open(str(outfile)) as hdul:
+        assert len(hdul) == 2
+        assert isinstance(hdul[1], fits.CompImageHDU)
+        assert hdul[1].header['HELLO'] == 'world'
+        assert hdul[1].header['TELESCOP'] == 'SDO/AIA'
+        assert hdul[1].header['NAXIS'] == 2
+        data_preserved = hdul[1].data == pytest.approx(data, abs=10)
+        print(np.abs(hdul[1].data - data).max())
+        print(kwargs)
+        if should_fail:  # high compression setting preserved
+            assert not data_preserved
+        else:
+            assert data_preserved
+
+
 def test_write_with_metadict_header_astropy(tmpdir):
-    fits_file = fits.open(AIA_171_IMAGE)
-    data, header = fits_file[0].data, fits_file[0].header
+    with fits.open(TEST_AIA_IMAGE) as fits_file:
+        data, header = fits_file[0].data, fits_file[0].header
     meta_header = MetaDict(OrderedDict(header))
     temp_file = tmpdir / "temp.fits"
-    with pytest.warns(SunpyUserWarning, match='The meta key comment is not valid ascii'):
-        sunpy.io.fits.write(str(temp_file), data, meta_header)
+    with pytest.warns(SunpyMetadataWarning, match='The meta key comment is not valid ascii'):
+        _fits.write(str(temp_file), data, meta_header)
     assert temp_file.exists()
-
+    fits_file.close()
 
 # Various warnings are thrown in this test, but we just want to check that the code
 # works without exceptions
+
+
 @pytest.mark.filterwarnings('ignore')
 def test_fitsheader():
     """Test that all test data can be converted back to a FITS header."""
-    extensions = ('fts', 'fits')
+    extensions = ('.fts', '.fits')
     for ext in extensions:
-        for ffile in Path(testpath).glob(f"*.{ext}*"):
+        test_files = [f for f in test_data_filenames() if f.suffix == ext]
+        for ffile in test_files:
             fits_file = fits.open(ffile)
             fits_file.verify("fix")
-            data, header = fits_file[0].data, fits_file[0].header
-            meta_header = MetaDict(OrderedDict(header))
-            sunpy.io.fits.header_to_fits(meta_header)
+            meta_header = MetaDict(OrderedDict(fits_file[0].header))
+            _fits.header_to_fits(meta_header)
             fits_file.close()
 
 
 def test_warn_nonascii():
     # Check that a non-ascii character raises a warning and not an error
-    with pytest.warns(SunpyUserWarning, match='not valid ascii'):
-        fits = header_to_fits({'bad': 'test\t',
-                               'good': 'test'})
+    with pytest.warns(SunpyMetadataWarning, match='not valid ascii'):
+        fits = _fits.header_to_fits({'bad': 'test\t',
+                                     'good': 'test'})
+    assert 'GOOD' in fits.keys()
+    assert 'BAD' not in fits.keys()
+
+
+def test_warn_nan():
+    # Check that a NaN value raises a warning and not an error
+    with pytest.warns(SunpyMetadataWarning, match='has a NaN value'):
+        fits = _fits.header_to_fits({'bad': float('nan'),
+                                     'good': 1.0})
     assert 'GOOD' in fits.keys()
     assert 'BAD' not in fits.keys()
 
 
 def test_warn_longkey():
     # Check that a key that is too long raises a warning and not an error
-    with pytest.warns(SunpyUserWarning, match='The meta key badlongkey is too long'):
-        fits = header_to_fits({'badlongkey': 'test',
-                               'goodkey': 'test'})
+    with pytest.warns(SunpyMetadataWarning, match='The meta key badlongkey is too long'):
+        fits = _fits.header_to_fits({'badlongkey': 'test',
+                                     'goodkey': 'test'})
     assert 'GOODKEY' in fits.keys()
     assert 'BADLONGKEY' not in fits.keys()
+
+
+def test_read_memmap():
+    data, _ = _fits.read(TEST_AIA_IMAGE, memmap=True)[0]
+    assert data.base is not None
+    assert isinstance(data.base, mmap.mmap)
+
+    data, _ = _fits.read(TEST_AIA_IMAGE, memmap=False)[0]
+    assert data.base is None

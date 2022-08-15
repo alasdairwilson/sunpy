@@ -3,16 +3,15 @@ This module FERMI GBM `~sunpy.timeseries.TimeSeries` source.
 """
 from collections import OrderedDict
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 import astropy.units as u
-from astropy.time import Time
+from astropy.time import TimeDelta
 
 import sunpy.io
-from sunpy.instr import fermi
+from sunpy.time import parse_time
 from sunpy.timeseries.timeseriesbase import GenericTimeSeries
 from sunpy.util.metadata import MetaDict
 from sunpy.visualization import peek_show
@@ -24,7 +23,7 @@ class GBMSummaryTimeSeries(GenericTimeSeries):
     """
     Fermi/GBM Summary lightcurve TimeSeries.
 
-    The Gamma-ray Burst Monitor (GBM) is an instrument aboard Fermi.
+    The Gamma-ray Burst Monitor (GBM) is an instrument on board Fermi.
     It is meant to detect gamma-ray bursts but also detects solar flares.
     It consists of 12 Sodium Iodide (NaI) scintillation detectors and 2 Bismuth Germanate (BGO) scintillation detectors.
     The NaI detectors cover from a few keV to about 1 MeV and provide burst triggers and locations.
@@ -32,7 +31,12 @@ class GBMSummaryTimeSeries(GenericTimeSeries):
 
     This summary lightcurve makes use of the CSPEC (daily version) data set which consists of the counts
     accumulated every 4.096 seconds in 128 energy channels for each of the 14 detectors.
+
     Note that the data is re-binned from the original 128 into the following 8 pre-determined energy channels.
+    The rebinning method treats the counts in each of the original 128 channels as
+    all having the energy of the average energy of that channel.  For example, the
+    counts in an 14.5--15.6 keV original channel would all be accumulated into the
+    15--25 keV rebinned channel.
 
     * 4-15 keV
     * 15-25 keV
@@ -57,13 +61,44 @@ class GBMSummaryTimeSeries(GenericTimeSeries):
     * `Fermi Data Product <https://fermi.gsfc.nasa.gov/ssc/data/access/>`_
     * `GBM Instrument Papers <https://gammaray.nsstc.nasa.gov/gbm/publications/instrument_journal_gbm.html>`_
     """
-    # Class attribute used to specify the source class of the TimeSeries.
+    # Class attributes used to specify the source class of the TimeSeries
+    # and a URL to the mission website.
     _source = 'gbmsummary'
+    _url = "https://gammaray.nsstc.nasa.gov/gbm/#"
+
+    def plot(self, axes=None, columns=None, **kwargs):
+        """
+        Plots the GBM timeseries.
+
+        Parameters
+        ----------
+        axes : `matplotlib.axes.Axes`, optional
+            The axes on which to plot the TimeSeries. Defaults to current axes.
+        columns : list[str], optional
+            If provided, only plot the specified columns.
+        **kwargs : `dict`
+            Additional plot keyword arguments that are handed to `~matplotlib.axes.Axes.plot`
+            functions.
+
+        Returns
+        -------
+        `~matplotlib.axes.Axes`
+            The plot axes.
+        """
+        axes, columns = self._setup_axes_columns(axes, columns)
+        for d in columns:
+            axes.plot(self._data.index, self._data[d], label=d, **kwargs)
+        axes.set_yscale("log")
+        axes.set_ylabel('Counts/s/keV')
+        axes.legend()
+        self._setup_x_axis(axes)
+        return axes
 
     @peek_show
-    def peek(self, **kwargs):
+    def peek(self, title=None, columns=None, **kwargs):
         """
-        Plots the GBM lightcurve TimeSeries. An example can be seen below:
+        Displays the GBM timeseries by calling
+        `~sunpy.timeseries.sources.fermi_gbm.GBMSummaryTimeSeries.plot`.
 
         .. plot::
 
@@ -74,29 +109,20 @@ class GBMSummaryTimeSeries(GenericTimeSeries):
 
         Parameters
         ----------
+        title : `str`, optional
+            The title of the plot.
+        columns : list[str], optional
+            If provided, only plot the specified columns.
         **kwargs : `dict`
-            Additional plot keyword arguments that are handed to `axes.plot` functions
+            Additional plot keyword arguments that are handed to `~matplotlib.axes.Axes.plot`
+            functions.
         """
-        # Check we have a timeseries valid for plotting
-        self._validate_data_for_plotting()
-
-        figure = plt.figure()
-        axes = plt.gca()
-        data_lab = self.to_dataframe().columns.values
-
-        for d in data_lab:
-            axes.plot(self.to_dataframe().index, self.to_dataframe()[d], label=d, **kwargs)
-
-        axes.set_yscale("log")
-        axes.set_title('Fermi GBM Summary data ' + str(self.meta.get(
-            'DETNAM').values()))
-        axes.set_xlabel('Start time: ' + self.to_dataframe().index[0].strftime(
-            '%Y-%m-%d %H:%M:%S UT'))
-        axes.set_ylabel('Counts/s/keV')
-        axes.legend()
-        figure.autofmt_xdate()
-
-        return figure
+        if title is None:
+            title = 'Fermi GBM Summary data ' + str(self.meta.get('DETNAM').values())
+        fig, ax = plt.subplots()
+        axes = self.plot(axes=ax, columns=columns, **kwargs)
+        axes.set_title(title)
+        return fig
 
     @classmethod
     def _parse_file(cls, filepath):
@@ -118,7 +144,7 @@ class GBMSummaryTimeSeries(GenericTimeSeries):
 
         Parameters
         ----------
-        filepath : `str`
+        hdulist : `str`
             The path to the file you want to parse.
         """
         header = MetaDict(OrderedDict(hdulist[0].header))
@@ -135,7 +161,8 @@ class GBMSummaryTimeSeries(GenericTimeSeries):
         summary_counts = _bin_data_for_summary(energy_bins, count_data)
 
         # get the time information in datetime format with the correct MET adjustment
-        gbm_times = Time([fermi.met_to_utc(t) for t in count_data['time']])
+        met_ref_time = parse_time('2001-01-01 00:00')  # Mission elapsed time
+        gbm_times = met_ref_time + TimeDelta(count_data['time'], format='sec')
         gbm_times.precision = 9
         gbm_times = gbm_times.isot.astype('datetime64')
 
@@ -185,25 +212,20 @@ def _bin_data_for_summary(energy_bins, count_data):
     count_data : `numpy.ndarray`
         The array of count data to rebin.
     """
-    # find the indices corresponding to some standard summary energy bins
+
+    # list of energy bands to sum between
     ebands = [4, 15, 25, 50, 100, 300, 800, 2000]
-    indices = []
-    for e in ebands:
-        indices.append(np.searchsorted(energy_bins['e_max'], e))
+    e_center = (energy_bins['e_min'] + energy_bins['e_max']) / 2
+    indices = [np.searchsorted(e_center, e) for e in ebands]
 
     summary_counts = []
-    for i in range(0, len(count_data['counts'])):
-        counts_in_bands = []
-        for j in range(1, len(ebands)):
-            counts_in_bands.append(
-                np.sum(count_data['counts'][i][indices[j - 1]:indices[j]]) /
-                (count_data['exposure'][i] *
-                 (energy_bins['e_max'][indices[j]] -
-                  energy_bins['e_min'][indices[j - 1]])))
+    for ind_start, ind_end in zip(indices[:-1], indices[1:]):
+        # sum the counts in the energy bands, and find counts/s/keV
+        summed_counts = np.sum(count_data["counts"][:, ind_start:ind_end], axis=1)
+        energy_width = (energy_bins["e_max"][ind_end - 1] - energy_bins["e_min"][ind_start])
+        summary_counts.append(summed_counts/energy_width/count_data["exposure"])
 
-        summary_counts.append(counts_in_bands)
-
-    return summary_counts
+    return np.array(summary_counts).T
 
 
 def _parse_detector(detector):

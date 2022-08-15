@@ -1,27 +1,25 @@
 """SUVI Map subclass definitions"""
-from __future__ import absolute_import, print_function, division
+import astropy.units as u
+from astropy.coordinates import CartesianRepresentation
+from astropy.visualization import AsinhStretch
+from astropy.visualization.mpl_normalize import ImageNormalize
 
-# pylint: disable=W0221,W0222,E1101,E1121
+from sunpy.map import GenericMap
+from sunpy.map.sources.source_type import source_stretch
 
 __author__ = "Jack Ireland"
 __email__ = "jack.ireland@nasa.gov"
 
-from astropy.coordinates import CartesianRepresentation
-import astropy.units as u
-from astropy.visualization.mpl_normalize import ImageNormalize
-from astropy.visualization import AsinhStretch
-
-from sunpy.map import GenericMap
-from sunpy.map.sources.source_type import source_stretch
 
 __all__ = ["SUVIMap"]
 
 
 class SUVIMap(GenericMap):
-    """SUVI Image Map.
+    """
+    SUVI Image Map.
 
     The Solar Ultraviolet Imager (SUVI) is a normal-incidence Cassegrain EUV
-    telescope onboard the latest of the Geostationary Operational Environmental
+    telescope on board the latest of the Geostationary Operational Environmental
     Satellite (GOES) missions (GOES-16, formerly known as GOES-R).
     It is similar to Atmospheric Imaging Assembly (AIA). It operates in
     geostationary orbit above the Americas at 75.2 degree W. It's primary
@@ -72,12 +70,8 @@ class SUVIMap(GenericMap):
     """
 
     def __init__(self, data, header, **kwargs):
-
         super().__init__(data, header, **kwargs)
 
-        # Fill in some missing info
-        self.meta["detector"] = "SUVI"
-        self.meta["telescop"] = "GOES-R"
         self._nickname = self.detector
         self.plot_settings["cmap"] = self._get_cmap_name()
         self.plot_settings["norm"] = ImageNormalize(
@@ -92,14 +86,15 @@ class SUVIMap(GenericMap):
                                                         'unit': u.m,
                                                         'representation_type': CartesianRepresentation,
                                                         'frame': "itrs"})
-        ] + super()._supported_observer_coordinates
+                ] + super()._supported_observer_coordinates
 
     @property
     def observatory(self):
-        """
-        Returns the observatory.
-        """
-        return self.meta["telescop"].split("/")[0]
+        return "GOES-R"
+
+    @property
+    def detector(self):
+        return "SUVI"
 
     @classmethod
     def is_datasource_for(cls, data, header, **kwargs):

@@ -1,273 +1,324 @@
-# flake8: noqa
+"""
+Configuration file for the Sphinx documentation builder.
+"""
+# -- stdlib imports ------------------------------------------------------------
 import os
 import sys
-from pathlib import Path
 import datetime
+import warnings
+from packaging.version import Version
 
-# -- Import base config from sphinx-astropy ------------------------------------
-try:
-    from sphinx_astropy.conf.v1 import *
-except ImportError:
-    print('ERROR: the documentation requires the "sphinx-astropy" package to be installed')
-    sys.exit(1)
-
-try:
-    import sphinx_gallery
-    if on_rtd and os.environ.get('READTHEDOCS_PROJECT').lower() != 'sunpy':
-        # Gallery takes too long on RTD to build unless you have extra build time.
-        has_sphinx_gallery = False
-    else:
-        has_sphinx_gallery = True
-except ImportError:
-    has_sphinx_gallery = False
-
+# -- Read the Docs Specific Configuration --------------------------------------
+# This needs to be done before sunpy is imported
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 if on_rtd:
     os.environ['SUNPY_CONFIGDIR'] = '/home/docs/'
     os.environ['HOME'] = '/home/docs/'
     os.environ['LANG'] = 'C'
     os.environ['LC_ALL'] = 'C'
+    os.environ['HIDE_PARFIVE_PROGESS'] = 'True'
 
-try:
-    import zeep
-except ImportError as e:
-    raise Exception(e, 'ERROR: zeep could not be imported. Building the documentation requires '
-                    'the "zeep" package to be installed')
+# -- Check for dependencies ----------------------------------------------------
+from sunpy.util import missing_dependencies_by_extra  # NOQA
+missing_requirements = missing_dependencies_by_extra("sunpy")["docs"]
+if missing_requirements:
+    print(
+        f"The {' '.join(missing_requirements.keys())} package(s) could not be found and "
+        "is needed to build the documentation, please install the 'docs' requirements."
+    )
+    sys.exit(1)
 
-try:
-    import skimage
-except ImportError as e:
-    raise Exception(e, 'ERROR: skimage could not be imported. Building the documentation requires '
-                    'the "scikit-image" package to be installed')
+# -- Non stdlib imports --------------------------------------------------------
+import ruamel.yaml as yaml  # NOQA
+from sphinx_gallery.sorting import ExplicitOrder  # NOQA
+from sphinx_gallery.sorting import ExampleTitleSortKey  # NOQA
 
-try:
-    import drms
-except ImportError as e:
-    raise Exception(e, 'ERROR: drms could not be imported. Building the documentation requires '
-                    'the "drms" package to be installed')
-
-try:
-    import glymur
-except ImportError as e:
-    raise Exception(e, 'ERROR: glymur could not be imported. Building the documentation requires '
-                    'the "glymur" package to be installed')
-
-try:
-    import sqlalchemy
-except ImportError as e:
-    raise Exception(e, 'ERROR: sqlalchemy could not be imported. Building the documentation requires '
-                    'the "sqlalchemy" package to be installed')
-
-try:
-    import astroquery
-except ImportError as e:
-    raise Exception(e, 'ERROR: astroquery could not be imported. Building the documentation requires '
-                    'the "astroquery" package to be installed')
-
-try:
-    import jplephem
-except ImportError as e:
-    raise Exception(e, 'ERROR: jplephem could not be imported. Building the documentation requires '
-                    'the "jplephem" package to be installed')
-
-# The version info for the project you're documenting, acts as replacement for
-# |version| and |release|, also used in various other places throughout the
-# built documents.
-# The short X.Y version.
-from sunpy import __version__  # noqa isort:skip
-version = '.'.join(__version__.split('.')[:3])
-# The full version, including alpha/beta/rc tags.
-release = __version__
-# Is this version a development release
-is_development = '.dev' in release
-
-# -- Shut up numpy warnings from WCSAxes --------------------------------------
-import numpy as np  # noqa isort:skip
-np.seterr(invalid='ignore')
-
-# -- Download Sample Data -----------------------------------------------------
-import sunpy.data.sample  # noqa isort:skip
-
-# -- General configuration ----------------------------------------------------
-# If your documentation needs a minimal Sphinx version, state it here.
-needs_sphinx = '2.0'
-
-# To perform a Sphinx version check that needs to be more specific than
-# major.minor, call `check_sphinx_version("x.y.z")` here.
-check_sphinx_version(needs_sphinx)
-
-# Add any custom intersphinx for SunPy
-intersphinx_mapping.pop('h5py', None)
-intersphinx_mapping['sqlalchemy'] = ('https://docs.sqlalchemy.org/en/latest/', None)
-intersphinx_mapping['pandas'] = ('https://pandas.pydata.org/pandas-docs/stable/', None)
-intersphinx_mapping['skimage'] = ('https://scikit-image.org/docs/stable/', None)
-intersphinx_mapping['drms'] = ('https://docs.sunpy.org/projects/drms/en/stable/', None)
-intersphinx_mapping['parfive'] = ('https://parfive.readthedocs.io/en/latest/', None)
-intersphinx_mapping['reproject'] = ('https://reproject.readthedocs.io/en/stable/', None)
-
-# List of patterns, relative to source directory, that match files and
-# directories to ignore when looking for source files.
-exclude_patterns.append('_templates')
-
-# Add any paths that contain templates here, relative to this directory.
-if 'templates_path' not in locals():  # in case parent conf.py defines it
-    templates_path = []
-templates_path.append('_templates')
-
-# For the linkcheck
-linkcheck_ignore = [r"https://doi.org/\d+",
-                    r"https://riot.im/\d+",
-                    r"https://github.com/\d+",
-                    r"https://docs.sunpy.org/\d+"]
-linkcheck_anchors = False
-
-# This is added to the end of RST files - a good place to put substitutions to
-# be used globally.
-rst_epilog = """
-.. SunPy
-.. _SunPy: https://sunpy.org
-.. _`SunPy mailing list`: https://groups.google.com/group/sunpy
-.. _`SunPy dev mailing list`: https://groups.google.com/group/sunpy-dev
-"""
-
-# -- Project information ------------------------------------------------------
+import sunpy  # NOQA
+from sunpy import __version__  # NOQA
+from sunpy.util.exceptions import SunpyDeprecationWarning, SunpyPendingDeprecationWarning  # NOQA
+from matplotlib import MatplotlibDeprecationWarning  # NOQA
+from astropy.utils.exceptions import AstropyDeprecationWarning  # NOQA
+# -- Project information -------------------------------------------------------
 project = 'SunPy'
 author = 'The SunPy Community'
 copyright = '{}, {}'.format(datetime.datetime.now().year, author)
 
-try:
-    from sunpy_sphinx_theme.conf import *
-except ImportError:
-    html_theme = 'default'
 
-try:
-    import ruamel.yaml as yaml
-    has_yaml = True
-    # Load data about stability
-    with open('./dev_guide/sunpy_stability.yaml', 'r') as estability:
-        sunpy_modules = yaml.load(estability.read(), Loader=yaml.Loader)
+# Register remote data option with doctest
+import doctest  # NOQA
+REMOTE_DATA = doctest.register_optionflag('REMOTE_DATA')
 
-    html_context = {
-        'sunpy_modules': sunpy_modules
-    }
+# The full version, including alpha/beta/rc tags
+release = __version__
+sunpy_version = Version(__version__)
+is_release = not(sunpy_version.is_prerelease or sunpy_version.is_devrelease)
 
-    def rstjinja(app, docname, source):
-        """
-        Render our pages as a jinja template for fancy templating goodness.
-        """
-        # Make sure we're outputting HTML
-        if app.builder.format != 'html':
-            return
-        src = source[0]
-        if "Current status" in src[:20]:
-            rendered = app.builder.templates.render_string(
-                src, app.config.html_context
-            )
-            source[0] = rendered
-except ImportError:
-    has_yaml = False
-    html_context = {}
-    print('Warning: Stability of SunPy API page of the documentation requires the ruamel.yaml package to be installed')
+# We want to ignore all warnings in a release version.
+if is_release:
+    warnings.simplefilter("ignore")
+warnings.filterwarnings("error", category=SunpyDeprecationWarning)
+warnings.filterwarnings("error", category=SunpyPendingDeprecationWarning)
+warnings.filterwarnings("error", category=MatplotlibDeprecationWarning)
+warnings.filterwarnings("error", category=AstropyDeprecationWarning)
+warnings.filterwarnings("ignore",
+                        message="The `sunpy.io.fits` module is deprecated",
+                        category=SunpyDeprecationWarning)
 
-# The name of an image file (within the static path) to use as favicon of the
-# docs. This file should be a Windows icon file (.ico) being 16x16 or 32x32
-# pixels large.
-html_favicon = "./logo/favicon.ico"
+# -- SunPy Sample Data and Config ----------------------------------------------
+# We set the logger to debug so that we can see any sample data download errors
+# in the CI, especially RTD.
+ori_level = sunpy.log.level
+sunpy.log.setLevel("DEBUG")
+import sunpy.data.sample  # NOQA
+sunpy.log.setLevel(ori_level)
 
-# The name for this set of Sphinx documents.  If None, it defaults to
-# "<project> v<release> documentation".
-html_title = f'{project} v{release}'
+# For the linkcheck
+linkcheck_ignore = [r"https://doi.org/\d+",
+                    r"https://element.io/\d+",
+                    r"https://github.com/\d+",
+                    r"https://docs.sunpy.org/\d+"]
+linkcheck_anchors = False
 
-# Output file base name for HTML help builder.
-htmlhelp_basename = project + 'doc'
+# -- General configuration -----------------------------------------------------
+# sphinxext-opengraph
+ogp_image = "https://raw.githubusercontent.com/sunpy/sunpy-logo/master/generated/sunpy_logo_word.png"
+ogp_use_first_image = True
+ogp_description_length = 160
+ogp_custom_meta_tags = [
+    '<meta property="og:ignore_canonical" content="true" />',
+]
 
-# A dictionary of values to pass into the template engine’s context for all pages.
-html_context['to_be_indexed'] = ['stable', 'latest']
+# Suppress warnings about overriding directives as we overload some of the
+# doctest extensions.
+suppress_warnings = ['app.add_directive', ]
 
-# -- Options for LaTeX output --------------------------------------------------
-# Grouping the document tree into LaTeX files. List of tuples
-# (source start file, target name, title, author, documentclass [howto/manual]).
-latex_documents = [('index', project + '.tex', project + ' Documentation', author, 'manual')]
+# Add any Sphinx extension module names here, as strings. They can be
+# extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
+# ones.
+extensions = [
+    'matplotlib.sphinxext.plot_directive',
+    'sphinx_automodapi.automodapi',
+    'sphinx_automodapi.smart_resolver',
+    'sphinx_changelog',
+    'sphinx_gallery.gen_gallery',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.coverage',
+    'sphinx.ext.doctest',
+    'sphinx.ext.inheritance_diagram',
+    'sphinx.ext.intersphinx',
+    'sphinx.ext.mathjax',
+    'sphinx.ext.napoleon',
+    'sphinx.ext.todo',
+    'sphinx.ext.viewcode',
+    'sunpy.util.sphinx.doctest',
+    'sunpy.util.sphinx.generate',
+    "sphinxext.opengraph",
+    'sphinx_design',
+]
 
-# -- Options for manual page output --------------------------------------------
-# One entry per manual page. List of tuples
-# (source start file, name, description, authors, manual section).
-man_pages = [('index', project.lower(), project + ' Documentation', [author], 1)]
+# Set automodapi to generate files inside the generated directory
+automodapi_toctreedirnm = "generated/api"
 
-# -- Swap to Napoleon ---------------------------------------------------------
-# Remove numpydoc
-extensions.remove('numpydoc')
-extensions.append('sphinx.ext.napoleon')
+# Add any paths that contain templates here, relative to this directory.
+# templates_path = ['_templates']
+
+# List of patterns, relative to source directory, that match files and
+# directories to ignore when looking for source files.
+# This pattern also affects html_static_path and html_extra_path.
+
+# Add any extra paths that contain custom files (such as robots.txt or
+# .htaccess) here, relative to this directory. These files are copied
+# directly to the root of the documentation.
+html_extra_path = ['robots.txt']
+
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+
+if is_release:
+    exclude_patterns.append('dev_guide/contents/*')
+
+# The suffix(es) of source filenames.
+# You can specify multiple suffix as a list of string:
+source_suffix = '.rst'
+
+# The master toctree document.
+master_doc = 'index'
+
+# The reST default role (used for this markup: `text`) to use for all
+# documents. Set to the "smart" one.
+default_role = 'obj'
 
 # Disable having a separate return type row
 napoleon_use_rtype = False
+
 # Disable google style docstrings
 napoleon_google_docstring = False
 
-# Extra extensions we want to enable.
-extensions += ['sphinx_astropy.ext.edit_on_github', 'sphinx.ext.doctest', 'sphinx.ext.githubpages']
+# Disable the use of param, which prevents a distinct "Other Parameters" section
+napoleon_use_param = False
 
-# -- Options for the edit_on_github extension ---------------------------------
-# Don't import the module as "version" or it will override the
-# "version" configuration parameter
-from sunpy import __version__  # noqa isort:skip
-edit_on_github_project = "sunpy/sunpy"
-if 'dev' not in release:
-    edit_on_github_branch = f"{version.split('.')[0]}.{version.split('.')[1]}"
-else:
-    edit_on_github_branch = "master"
-edit_on_github_source_root = ""
-edit_on_github_doc_root = "docs"
-edit_on_github_skip_regex = '_.*|generated/.*'
-github_issues_url = 'https://github.com/sunpy/sunpy/issues/'
+# Enable nitpicky mode, which forces links to be non-broken
+nitpicky = True
+# This is not used. See docs/nitpick-exceptions file for the actual listing.
+nitpick_ignore = []
+for line in open('nitpick-exceptions'):
+    if line.strip() == "" or line.startswith("#"):
+        continue
+    dtype, target = line.split(None, 1)
+    target = target.strip()
+    nitpick_ignore.append((dtype, target))
 
-# -- Options for the Sphinx gallery -------------------------------------------
-if has_sphinx_gallery:
-    from sphinx_gallery.sorting import ExplicitOrder
-    from sphinx_gallery.sorting import ExampleTitleSortKey
-    extensions += ["sphinx_gallery.gen_gallery"]
-    path = Path.cwd()
-    example_dir = path.parent.joinpath('examples')
-    sphinx_gallery_conf = {
-        'backreferences_dir': str(path.joinpath('generated', 'modules')),
-        'filename_pattern': '^((?!skip_).)*$',
-        'examples_dirs': example_dir,
-        'subsection_order': ExplicitOrder([
-            '../examples/acquiring_data',
-            '../examples/map',
-            '../examples/map_transformations',
-            '../examples/time_series',
-            '../examples/units_and_coordinates',
-            '../examples/plotting',
-            '../examples/saving_and_loading_data',
-            '../examples/computer_vision_techniques',
-        ]),
-        'within_subsection_order': ExampleTitleSortKey,
-        'gallery_dirs': path.joinpath('generated', 'gallery'),
-        'default_thumb_file': path.joinpath('logo', 'sunpy_icon_128x128.png'),
-        'abort_on_example_error': False,
-        'plot_gallery': True
-    }
 
-"""
-Write the latest changelog into the documentation.
-"""
-target_file = os.path.abspath("./whatsnew/latest_changelog.txt")
+# -- Options for intersphinx extension -----------------------------------------
+# Example configuration for intersphinx: refer to the Python standard library.
+intersphinx_mapping = {
+    "python": (
+        "https://docs.python.org/3/",
+        (None, "http://www.astropy.org/astropy-data/intersphinx/python3.inv"),
+    ),
+    "numpy": (
+        "https://numpy.org/doc/stable/",
+        (None, "http://www.astropy.org/astropy-data/intersphinx/numpy.inv"),
+    ),
+    "scipy": (
+        "https://docs.scipy.org/doc/scipy/reference/",
+        (None, "http://www.astropy.org/astropy-data/intersphinx/scipy.inv"),
+    ),
+    "matplotlib": ("https://matplotlib.org/stable", None),
+    "aiapy": ("https://aiapy.readthedocs.io/en/stable/", None),
+    "astropy": ("https://docs.astropy.org/en/stable/", None),
+    "astroquery": ("https://astroquery.readthedocs.io/en/latest/", None),
+    "drms": ("https://docs.sunpy.org/projects/drms/en/stable/", None),
+    "mpl_animators": ("https://docs.sunpy.org/projects/mpl-animators/en/stable/", None),
+    "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
+    "parfive": ("https://parfive.readthedocs.io/en/stable/", None),
+    "reproject": ("https://reproject.readthedocs.io/en/stable/", None),
+    "skimage": ("https://scikit-image.org/docs/stable/", None),
+    "sqlalchemy": ("https://docs.sqlalchemy.org/en/latest/", None),
+    "sunkit_image": ("https://docs.sunpy.org/projects/sunkit-image/en/stable/", None),
+    "sunkit_instruments": ("https://docs.sunpy.org/projects/sunkit-instruments/en/stable/", None),
+    "zeep": ("https://docs.python-zeep.org/en/stable/", None),
+    "asdf": ("https://asdf.readthedocs.io/en/stable/", None),
+}
+
+# -- Options for HTML output ---------------------------------------------------
+# The theme to use for HTML and HTML Help pages.  See the documentation for
+# a list of builtin themes.
+
+from sunpy_sphinx_theme.conf import *  # NOQA
+
+# Add any paths that contain custom static files (such as style sheets) here,
+# relative to this directory. They are copied after the builtin static files,
+# so a file named "default.css" will overwrite the builtin "default.css".
+# html_static_path = ['_static']
+
+# Render inheritance diagrams in SVG
+graphviz_output_format = "svg"
+
+graphviz_dot_args = [
+    '-Nfontsize=10',
+    '-Nfontname=Helvetica Neue, Helvetica, Arial, sans-serif',
+    '-Efontsize=10',
+    '-Efontname=Helvetica Neue, Helvetica, Arial, sans-serif',
+    '-Gfontsize=10',
+    '-Gfontname=Helvetica Neue, Helvetica, Arial, sans-serif'
+]
+
+# -- Sphinx Gallery ------------------------------------------------------------
+# JSOC email os env
+os.environ["JSOC_EMAIL"] = "nabil.freij@gmail.com"
+sphinx_gallery_conf = {
+    'backreferences_dir': os.path.join('generated', 'modules'),
+    'filename_pattern': '^((?!skip_).)*$',
+    'examples_dirs': os.path.join('..', 'examples'),
+    'subsection_order': ExplicitOrder([
+        '../examples/acquiring_data',
+        '../examples/map',
+        '../examples/map_transformations',
+        '../examples/time_series',
+        '../examples/units_and_coordinates',
+        '../examples/plotting',
+        '../examples/differential_rotation',
+        '../examples/saving_and_loading_data',
+        '../examples/computer_vision_techniques',
+        '../examples/developer_tools'
+    ]),
+    'within_subsection_order': ExampleTitleSortKey,
+    'gallery_dirs': os.path.join('generated', 'gallery'),
+    'matplotlib_animations': True,
+    # Comes from the theme.
+    "default_thumb_file": png_icon,
+    'abort_on_example_error': False,
+    'plot_gallery': 'True',
+    'remove_config_comments': True,
+    'doc_module': ('sunpy'),
+    'only_warn_on_example_error': True,
+}
+
+# -- Linking to OpenCV docs by using rst_epilog --------------------------------
 try:
-    from sunpy.util.towncrier import generate_changelog_for_docs
-    if is_development:
-        generate_changelog_for_docs("../", target_file)
-except Exception as e:
-    print(f"Failed to add changelog to docs with error {e}.")
-# Make sure the file exists or else sphinx will complain.
-open(target_file, 'a').close()
+    import requests
+    from bs4 import BeautifulSoup
+
+    base_url = "https://docs.opencv.org"
+
+    # The stable-version docs are the first item in the second list on the main page
+    all_docs = BeautifulSoup(requests.get(base_url).text, 'html.parser')
+    version = all_docs.find_all('ul')[1].li.a.attrs['href'][2:]  # strip leading "./"
+
+    # Find the relative URL to the page for the `cv` namespace
+    stable_docs = BeautifulSoup(requests.get(f"{base_url}/{version}/namespaces.html").text,
+                                'html.parser')
+    cv_namespace = stable_docs.find("a", string="cv").attrs['href']
+
+    # Find the relative URL for warpAffine/filter2D in the `cv` namespace
+    all_cv = BeautifulSoup(requests.get(f"{base_url}/{version}/{cv_namespace}").text,
+                           'html.parser')
+    warpAffine = all_cv.find("a", string="warpAffine").attrs['href'][6:]  # strip leading "../../"
+    filter2D = all_cv.find("a", string="filter2D").attrs['href'][6:]  # strip leading "../../"
+
+    # Construct the full URL for warpAffine/filter2D
+    warpAffine_full = f"{base_url}/{version}/{warpAffine}"
+    filter2D_full = f"{base_url}/{version}/{filter2D}"
+except:
+    # In the event of any failure (e.g., no network connectivity)
+    warpAffine_full = ""
+    filter2D_full = ""
+
+rst_epilog = f"""
+.. |cv2_warpAffine| replace:: **cv2.warpAffine()**
+.. _cv2_warpAffine: {warpAffine_full}
+.. |cv2_filter2D| replace:: **cv2.filter2D()**
+.. _cv2_filter2D: {filter2D_full}
+"""
 
 
+# -- Stability Page ------------------------------------------------------------
+with open('./code_ref/sunpy_stability.yaml', 'r') as estability:
+    sunpy_modules = yaml.load(estability.read(), Loader=yaml.Loader)
+
+html_context = {
+    'sunpy_modules': sunpy_modules,
+    'is_development': not is_release,
+}
+
+
+def rstjinja(app, docname, source):
+    """
+    Render our pages as a jinja template for fancy templating goodness.
+    """
+    # Make sure we're outputting HTML
+    if app.builder.format != 'html':
+        return
+    files_to_render = ["code_ref/stability", "dev_guide/index"]
+    if docname in files_to_render:
+        print(f"Jinja rendering {docname}")
+        rendered = app.builder.templates.render_string(
+            source[0], app.config.html_context
+        )
+        source[0] = rendered
+
+
+# -- Sphinx setup --------------------------------------------------------------
 def setup(app):
-    if not has_sphinx_gallery:
-        import warnings
-        warnings.warn('The sphinx_gallery extension is not installed, so the '
-                      'gallery will not be built. You will probably see '
-                      'additional warnings about undefined references due '
-                      'to this.')
-    if has_yaml:
-        app.connect("source-read", rstjinja)
+    # Generate the stability page
+    app.connect("source-read", rstjinja)

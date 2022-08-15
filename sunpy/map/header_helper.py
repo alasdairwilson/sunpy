@@ -1,16 +1,13 @@
-import warnings
-
 import numpy as np
 
 import astropy.units as u
 import astropy.wcs
 from astropy.coordinates import SkyCoord
 
-from sunpy.coordinates import frames
+from sunpy.coordinates import frames, sun
 from sunpy.util import MetaDict
-from sunpy.util.exceptions import SunpyUserWarning
 
-__all__ = ['meta_keywords', 'make_fitswcs_header']
+__all__ = ['meta_keywords', 'make_fitswcs_header', 'get_observer_meta']
 
 
 def meta_keywords():
@@ -19,7 +16,6 @@ def meta_keywords():
 
     Examples
     --------
-
     Returns a dictionary of all meta keywords that are used in a `sunpy.map.GenericMap` header:
         >>> import sunpy.map
         >>> sunpy.map.meta_keywords()
@@ -39,8 +35,8 @@ def make_fitswcs_header(data, coordinate,
                         instrument=None,
                         telescope=None,
                         observatory=None,
-                        wavelength: u.angstrom=None,
-                        exposure: u.s=None,
+                        wavelength: u.angstrom = None,
+                        exposure: u.s = None,
                         projection_code="TAN"):
     """
     Function to create a FITS-WCS header from a coordinate object
@@ -52,9 +48,9 @@ def make_fitswcs_header(data, coordinate,
     data : `~numpy.ndarray` or `tuple`
         Array data of Map for which a header is required, or the shape of the
         data array (in numpy order, i.e. ``(y_size, x_size)``).
-    coordinates : `~astropy.coordinates.SkyCoord` or `~astropy.coordinates.BaseFrame`
-        Coordinate object to get meta information for map header.
-    reference_pixel :`~astropy.units.Quantity` of size 2, optional
+    coordinate : `~astropy.coordinates.SkyCoord` or `~astropy.coordinates.BaseCoordinateFrame`
+        The coordinate of the reference pixel.
+    reference_pixel : `~astropy.units.Quantity`, optional
         Reference pixel along each axis. These are expected to be Cartestian ordered, i.e
         the first index is the x axis, second index is the y axis. Defaults to
         the center of data array, ``(data.shape[1] - 1)/2., (data.shape[0] - 1)/2.)``,
@@ -64,10 +60,10 @@ def make_fitswcs_header(data, coordinate,
         Pixel scaling along x and y axis (i.e. the spatial scale of the pixels (dx, dy)). These are
         expected to be Cartestian ordered, i.e [dx, dy].
         Defaults to ``([1., 1.] arcsec/pixel)``.
-    rotation_angle : `~astropy.unit.Quantity`, optional
+    rotation_angle : `~astropy.units.Quantity`, optional
         Coordinate system rotation angle, will be converted to a rotation
         matrix and stored in the ``PCi_j`` matrix. Can not be specified with
-        ``rotation_matrix``.
+        ``rotation_matrix``. Defaults to no rotation.
     rotation_matrix : `~numpy.ndarray` of dimensions 2x2, optional
         Matrix describing the rotation required to align solar North with
         the top of the image in FITS ``PCi_j`` convention. Can not be specified
@@ -78,10 +74,10 @@ def make_fitswcs_header(data, coordinate,
         Name of the telescope of the observation.
     observatory : `~str`, optional
         Name of the observatory of the observation.
-    wavelength : `~u.Quantity`, optional
+    wavelength : `~astropy.units.Quantity`, optional
         Wavelength of the observation as an astropy quanitity, e.g. 171*u.angstrom.
         From this keyword, the meta keywords ``wavelnth`` and ``waveunit`` will be populated.
-    exposure : `~u.Quantity`, optional
+    exposure : `~astropy.units.Quantity`, optional
         Exposure time of the observation
     projection_code : `str`, optional
         The FITS standard projection code for the new header.
@@ -90,6 +86,11 @@ def make_fitswcs_header(data, coordinate,
     -------
     `~sunpy.util.MetaDict`
         The header information required for making a `sunpy.map.GenericMap`.
+
+    Notes
+    -----
+    The observer coordinate is taken from the observer property of the ``reference_pixel``
+    argument.
 
     Examples
     --------
@@ -105,7 +106,32 @@ def make_fitswcs_header(data, coordinate,
     >>> my_header = sunpy.map.make_fitswcs_header(data, my_coord)
     >>> my_map = sunpy.map.Map(data, my_header)
     """
+    coordinate = _validate_coordinate(coordinate)
 
+    if hasattr(data, "shape"):
+        shape = data.shape
+    else:
+        shape = data
+
+    meta_wcs = _get_wcs_meta(coordinate, projection_code)
+
+    meta_wcs = _set_instrument_meta(meta_wcs, instrument, telescope, observatory, wavelength, exposure)
+    meta_wcs = _set_transform_params(meta_wcs, coordinate, reference_pixel, scale, shape)
+    meta_wcs = _set_rotation_params(meta_wcs, rotation_angle, rotation_matrix)
+
+    if getattr(coordinate, 'observer', None) is not None:
+        # Have to check for str, as doing == on a SkyCoord and str raises an error
+        if isinstance(coordinate.observer, str) and coordinate.observer == 'self':
+            dsun_obs = coordinate.radius
+        else:
+            dsun_obs = coordinate.observer.radius
+        meta_wcs['rsun_obs'] = sun._angular_radius(coordinate.rsun, dsun_obs).to_value(u.arcsec)
+
+    meta_dict = MetaDict(meta_wcs)
+    return meta_dict
+
+
+def _validate_coordinate(coordinate):
     if not isinstance(coordinate, (SkyCoord, frames.BaseCoordinateFrame)):
         raise ValueError("coordinate needs to be a coordinate frame or an SkyCoord instance.")
 
@@ -117,37 +143,14 @@ def make_fitswcs_header(data, coordinate,
 
     if isinstance(coordinate, frames.Heliocentric):
         raise ValueError("This function does not currently support heliocentric coordinates.")
+    return coordinate
 
-    if hasattr(data, "shape"):
-        shape = data.shape
-    else:
-        shape = data
 
-    meta_wcs = _get_wcs_meta(coordinate, projection_code)
-
-    if hasattr(coordinate, "observer") and isinstance(coordinate.observer, frames.BaseCoordinateFrame):
-        meta_observer = get_observer_meta(coordinate.observer, getattr(coordinate, 'rsun', None))
-        meta_wcs.update(meta_observer)
-
-    meta_instrument = _get_instrument_meta(instrument, telescope, observatory, wavelength, exposure)
-    meta_wcs.update(meta_instrument)
-
-    if reference_pixel is None:
-        reference_pixel = u.Quantity([(shape[1] + 1)/2.*u.pixel, (shape[0] + 1)/2.*u.pixel])
-    if scale is None:
-        scale = [1., 1.] * (u.arcsec/u.pixel)
-
-    meta_wcs['crval1'], meta_wcs['crval2'] = (coordinate.spherical.lon.to_value(meta_wcs['cunit1']),
-                                              coordinate.spherical.lat.to_value(meta_wcs['cunit2']))
-
-    meta_wcs['crpix1'], meta_wcs['crpix2'] = (reference_pixel[0].to_value(u.pixel),
-                                              reference_pixel[1].to_value(u.pixel))
-
-    meta_wcs['cdelt1'], meta_wcs['cdelt2'] = (scale[0].to_value(meta_wcs['cunit1']/u.pixel),
-                                              scale[1].to_value(meta_wcs['cunit2']/u.pixel))
-
+def _set_rotation_params(meta_wcs, rotation_angle, rotation_matrix):
     if rotation_angle is not None and rotation_matrix is not None:
         raise ValueError("Can not specify both rotation angle and rotation matrix.")
+    if rotation_angle is None and rotation_matrix is None:
+        rotation_angle = 0 * u.deg
 
     if rotation_angle is not None:
         lam = meta_wcs['cdelt1'] / meta_wcs['cdelt2']
@@ -160,10 +163,39 @@ def make_fitswcs_header(data, coordinate,
         (meta_wcs['PC1_1'], meta_wcs['PC1_2'],
          meta_wcs['PC2_1'], meta_wcs['PC2_2']) = (rotation_matrix[0, 0], rotation_matrix[0, 1],
                                                   rotation_matrix[1, 0], rotation_matrix[1, 1])
+    return meta_wcs
 
-    meta_dict = MetaDict(meta_wcs)
 
-    return meta_dict
+def _set_transform_params(meta_wcs, coordinate, reference_pixel, scale, shape):
+    meta_wcs['naxis'] = 2
+    meta_wcs['naxis1'] = shape[1]
+    meta_wcs['naxis2'] = shape[0]
+
+    if reference_pixel is None:
+        reference_pixel = u.Quantity([(shape[1] - 1)/2.*u.pixel,
+                                      (shape[0] - 1)/2.*u.pixel])
+    if scale is None:
+        scale = [1., 1.] * (u.arcsec/u.pixel)
+
+    meta_wcs['crval1'], meta_wcs['crval2'] = (coordinate.spherical.lon.to_value(meta_wcs['cunit1']),
+                                              coordinate.spherical.lat.to_value(meta_wcs['cunit2']))
+
+    # When the native latitude of the fiducial point is 0 degrees, which is typical for cylindrical
+    # projections, the correct value of `lonpole` depends on whether the world latitude of the
+    # fiducial point is greater than or less than its native latitude.
+    if coordinate.spherical.lat.to_value(u.deg) < meta_wcs['theta0']:
+        meta_wcs['LONPOLE'] = 180.
+    else:
+        meta_wcs['LONPOLE'] = 0.
+    del meta_wcs['theta0']  # remove the native latitude of the fiducial point
+
+    # Add 1 to go from input 0-based indexing to FITS 1-based indexing
+    meta_wcs['crpix1'], meta_wcs['crpix2'] = (reference_pixel[0].to_value(u.pixel) + 1,
+                                              reference_pixel[1].to_value(u.pixel) + 1)
+
+    meta_wcs['cdelt1'] = scale[0].to_value(meta_wcs['cunit1']/u.pixel)
+    meta_wcs['cdelt2'] = scale[1].to_value(meta_wcs['cunit2']/u.pixel)
+    return meta_wcs
 
 
 def _get_wcs_meta(coordinate, projection_code):
@@ -173,7 +205,7 @@ def _get_wcs_meta(coordinate, projection_code):
 
     Parameters
     ----------
-    coordinate : ~`astropy.coordinates.BaseFrame`
+    coordinate : `~astropy.coordinates.BaseCoordinateFrame`
 
     Returns
     -------
@@ -182,6 +214,7 @@ def _get_wcs_meta(coordinate, projection_code):
             * ctype1, ctype2
             * cunit1, cunit2
             * date_obs
+            * observer auxillary information, if set on `coordinate`
     """
 
     coord_meta = {}
@@ -191,31 +224,30 @@ def _get_wcs_meta(coordinate, projection_code):
     cunit1, cunit2 = skycoord_wcs.wcs.cunit
     coord_meta = dict(skycoord_wcs.to_header())
     coord_meta['cunit1'], coord_meta['cunit2'] = cunit1.to_string("fits"), cunit2.to_string("fits")
+    coord_meta['theta0'] = skycoord_wcs.wcs.theta0  # add the native latitude of the fiducial point
 
     return coord_meta
 
 
 @u.quantity_input
-def get_observer_meta(observer, rsun: (u.Mm, None)):
+def get_observer_meta(observer, rsun: (u.Mm, None) = None):
     """
     Function to get observer meta from coordinate frame.
 
     Parameters
     ----------
-    coordinate : ~`astropy.coordinates.BaseFrame`
+    observer : `~astropy.coordinates.BaseCoordinateFrame`
         The coordinate of the observer, must be transformable to Heliographic
         Stonyhurst.
-    rsun : `astropy.units.Quantity`
-        The radius of the Sun.
+    rsun : `astropy.units.Quantity`, optional
+        The radius of the Sun. If ``None``, the RSUN_OBS and RSUN_REF keys are
+        not set.
 
     Returns
     -------
-    `dict`
-        Containing the WCS meta information
-            * hgln_obs, hglt_obs
-            * dsun_obs
-            * rsun_obs
-            * rsun_ref
+    coord_meta : `dict`
+        WCS metadata, with the keys ``['hgln_obs', 'hglt_obs', 'dsun_obs']``,
+        and additionally if ``rsun`` is given ``['rsun_obs', 'rsun_ref']``.
     """
     observer = observer.transform_to(frames.HeliographicStonyhurst(obstime=observer.obstime))
     coord_meta = {}
@@ -223,32 +255,30 @@ def get_observer_meta(observer, rsun: (u.Mm, None)):
     coord_meta['hgln_obs'] = observer.lon.to_value(u.deg)
     coord_meta['hglt_obs'] = observer.lat.to_value(u.deg)
     coord_meta['dsun_obs'] = observer.radius.to_value(u.m)
-    if rsun:
+    if rsun is not None:
         coord_meta['rsun_ref'] = rsun.to_value(u.m)
-        coord_meta['rsun_obs'] = np.arctan(rsun / observer.radius).to_value(u.arcsec)
+        coord_meta['rsun_obs'] = sun._angular_radius(rsun, observer.radius).to_value(u.arcsec)
 
     return coord_meta
 
 
-def _get_instrument_meta(instrument, telescope, observatory, wavelength, exposure):
+def _set_instrument_meta(meta_wcs, instrument, telescope, observatory, wavelength, exposure):
     """
     Function to correctly name keywords from keyword arguments
     """
-    coord = {}
-
     if instrument is not None:
-        coord['instrume'] = str(instrument)
+        meta_wcs['instrume'] = str(instrument)
     if telescope is not None:
-        coord['telescop'] = str(telescope)
+        meta_wcs['telescop'] = str(telescope)
     if observatory is not None:
-        coord['obsrvtry'] = str(observatory)
+        meta_wcs['obsrvtry'] = str(observatory)
     if wavelength is not None:
-        coord['wavelnth'] = wavelength.to_value()
-        coord['waveunit'] = wavelength.unit.to_string("fits")
+        meta_wcs['wavelnth'] = wavelength.to_value()
+        meta_wcs['waveunit'] = wavelength.unit.to_string("fits")
     if exposure is not None:
-        coord['exptime'] = exposure.to_value(u.s)
+        meta_wcs['exptime'] = exposure.to_value(u.s)
 
-    return coord
+    return meta_wcs
 
 
 _map_meta_keywords = {

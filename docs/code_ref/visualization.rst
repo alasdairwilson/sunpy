@@ -1,5 +1,5 @@
-SunPy visualization
-===================
+Visualization (`sunpy.visualization`)
+*************************************
 
 `sunpy.visualization` contains plotting helpers and functions.
 
@@ -7,8 +7,10 @@ SunPy visualization
 
 .. automodapi:: sunpy.visualization.colormaps
 
+.. automodapi:: sunpy.visualization.colormaps.color_tables
+
 .. automodapi:: sunpy.visualization.animator
-    :headings: ^#
 
 .. automodapi:: sunpy.visualization.wcsaxes_compat
-    :headings: ^#
+
+.. automodapi:: sunpy.visualization.drawing

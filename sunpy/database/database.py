@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 from sqlalchemy import create_engine, exists
 from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from astropy import units
 
@@ -40,7 +41,7 @@ class EntryNotFoundError(Exception):
     def __init__(self, entry_id):
         self.entry_id = entry_id
 
-    def __str__(self):  # pragma: no cover
+    def __str__(self):
         return 'an entry with the ID {:d} does not exist'.format(
             self.entry_id)
 
@@ -54,7 +55,7 @@ class EntryAlreadyAddedError(Exception):
     def __init__(self, database_entry):
         self.database_entry = database_entry
 
-    def __str__(self):  # pragma: no cover
+    def __str__(self):
         return (
             'the entry {!r} was already added '
             'to the database'.format(self.database_entry))
@@ -70,7 +71,7 @@ class EntryAlreadyStarredError(Exception):
     def __init__(self, database_entry):
         self.database_entry = database_entry
 
-    def __str__(self):  # pragma: no cover
+    def __str__(self):
         return (
             'the entry {!r} is already marked '
             'as starred'.format(self.database_entry))
@@ -85,7 +86,7 @@ class EntryAlreadyUnstarredError(Exception):
     def __init__(self, database_entry):
         self.database_entry = database_entry
 
-    def __str__(self):  # pragma: no cover
+    def __str__(self):
         return (
             'the entry {!r} is already not marked '
             'as starred'.format(self.database_entry))
@@ -100,7 +101,7 @@ class NoSuchTagError(Exception):
     def __init__(self, tag_name):
         self.tag_name = tag_name
 
-    def __str__(self):  # pragma: no cover
+    def __str__(self):
         return 'the tag {!r} is not saved in the database'.format(
             self.tag_name)
 
@@ -115,9 +116,26 @@ class TagAlreadyAssignedError(Exception):
         self.database_entry = database_entry
         self.tag_name = tag_name
 
-    def __str__(self):  # pragma: no cover
+    def __str__(self):
         errmsg = 'the database entry {0!r} has already assigned the tag {1!r}'
         return errmsg.format(self.database_entry, self.tag_name)
+
+
+class PartialFetchError(Exception):
+    """
+    This exception is raised if the number of files returned by the
+    downloader does not match the number expected.
+    """
+
+    def __init__(self, paths, n_expected):
+        self.paths = paths
+        self.n_expected = int(n_expected)
+
+    def __str__(self):
+        return (f"The downloader returned {len(self.paths)} file(s) "
+                f"but {self.n_expected} file(s) were expected.\n"
+                f"Successful downloads: {self.paths}\n"
+                f"Errors: {self.paths.errors}")
 
 
 def split_database(source_database, destination_database, *query_string):
@@ -134,7 +152,7 @@ def split_database(source_database, destination_database, *query_string):
     destination_database : `~sunpy.database.database.Database`
         A SunPy `~Database` object. This is the database to which the matched
         entries will be moved.
-    query_string : `list`
+    *query_string : `list`
         A variable number of attributes that are chained together via the
         boolean AND operator. The | operator may be used between attributes
         to express the boolean OR operator.
@@ -150,11 +168,11 @@ def split_database(source_database, destination_database, *query_string):
     >>> from sunpy.net import vso, attrs as a
     >>> database1 = Database('sqlite:///:memory:')
     >>> database2 = Database('sqlite:///:memory:')
-    >>> client = vso.VSOClient()  # doctest: +REMOTE_DATA
-    >>> qr = client.search(a.Time('2011-05-08', '2011-05-08 00:00:05'))  # doctest: +REMOTE_DATA
-    >>> database1.add_from_vso_query_result(qr)  # doctest: +REMOTE_DATA
+    >>> client = vso.VSOClient()  # doctest: +SKIP
+    >>> qr = client.search(a.Time('2011-05-08', '2011-05-08 00:00:05'), response_format="legacy")  # doctest: +SKIP
+    >>> database1.add_from_vso_query_result(qr)  # doctest: +SKIP
     >>> database1, database2 = split_database(database1, database2,
-    ...            a.Instrument('AIA') | a.Instrument('ERNE'))  # doctest: +REMOTE_DATA
+    ...            a.Instrument.aia | a.Instrument.erne)  # doctest: +SKIP
     """
 
     query_string = and_(*query_string)
@@ -211,19 +229,19 @@ class Database:
         :class:`sunpy.database.caching.LRUCache` and
         :class:`sunpy.database.caching.LFUCache`.
         The default value is :class:`sunpy.database.caching.LRUCache`.
-    cache_size : int
+    cache_size : `int`
         The maximum number of database entries, default is no limit.
-    default_waveunit : `str` or `~astropy.units.Unit`, optional
+    default_waveunit : `str` or `~astropy.units.Quantity`, optional
         The wavelength unit that will be used if an entry is added to the
         database but its wavelength unit cannot be found (either in the file or
         the VSO query result block, depending on the way the entry was added).
         If an `~astropy.units.Unit` is passed, it is assigned to ``default_waveunit``.
-        If a `str` is passed, it will be converted to `~astropy.units.Unit` through
-        the `astropy.units.Unit()` initializer, and then assigned to default_waveunit.
-        If an invalid string is passed, `~sunpy.database.WaveunitNotConvertibleError`
+        If a `str` is passed, it will be converted to a `~astropy.units.Quantity` through
+        the `~astropy.units.Quantity` initializer, and then assigned to default_waveunit.
+        If an invalid string is passed, `~sunpy.database.tables.WaveunitNotConvertibleError`
         is raised. If `None` (the default), attempting to add an entry without knowing
         the wavelength unit results in a
-        :exc:`sunpy.database.WaveunitNotFoundError`.
+        :exc:`sunpy.database.tables.WaveunitNotFoundError`.
     """
     """
     Attributes
@@ -232,15 +250,12 @@ class Database:
         A SQLAlchemy session object. This may be used for advanced queries and
         advanced manipulations and should only be used by people who are
         experienced with SQLAlchemy.
-
-    cache_size: int
+    cache_size : `int`
         The maximum number of database entries. This attribute is read-only. To
         change this value, use the method
         :meth:`sunpy.database.Database.set_cache_size`.
-
     tags : list of sunpy.database.Tag objects
         A list of all saved tags in database. This attribute is read-only.
-
     default_waveunit : str
         See "Parameters" section.
 
@@ -375,7 +390,7 @@ class Database:
 
     def commit(self):
         """Flush pending changes and commit the current transaction. This is a
-        shortcut for :meth:`session.commit()`.
+        shortcut for :meth:`sunpy.database.Database.commit`.
 
         """
         self.session.commit()
@@ -412,6 +427,10 @@ class Database:
             self.remove(temp)
 
         paths = client.fetch(query_result, path)
+
+        # Unable to handle partial success
+        if len(paths) != len(query_result):
+            raise PartialFetchError(paths, len(query_result))
 
         for (path, block) in zip(paths, query_result):
             qr_entry = tables.DatabaseEntry._from_query_result_block(block)
@@ -467,7 +486,7 @@ class Database:
 
         Parameters
         ----------
-        query : `list`
+        *query : `list`
             A variable number of attributes that are chained together via the
             boolean AND operator. The | operator may be used between attributes
             to express the boolean OR operator.
@@ -490,9 +509,9 @@ class Database:
 
         Examples
         --------
-        The `~sunpy.Database.fetch` method can be used along with the `overwrite=True`
+        This method can be used along with the ``overwrite=True``
         argument to overwrite and redownload files corresponding to the query, even if
-        its entries are already present in the database. Note that the `overwrite=True`
+        its entries are already present in the database. Note that the ``overwrite=True``
         argument deletes the old matching database entries and new database entries are
         added with information from the redownloaded files.
 
@@ -501,10 +520,10 @@ class Database:
         >>> from sunpy.net import vso, attrs as a
         >>> database = Database('sqlite:///:memory:')
         >>> database.fetch(a.Time('2012-08-05', '2012-08-05 00:00:05'),
-        ...                a.Instrument('AIA'))  # doctest: +REMOTE_DATA
+        ...                a.Instrument.aia)  # doctest: +SKIP
         >>> print(display_entries(database,
         ...                       ['id', 'observation_time_start', 'observation_time_end',
-        ...                        'instrument', 'wavemin', 'wavemax']))  # doctest: +REMOTE_DATA
+        ...                        'instrument', 'wavemin', 'wavemax']))  # doctest: +SKIP
             id observation_time_start observation_time_end instrument wavemin wavemax
             --- ---------------------- -------------------- ---------- ------- -------
               1    2012-08-05 00:00:01  2012-08-05 00:00:02        AIA     9.4     9.4
@@ -512,10 +531,10 @@ class Database:
               3    2012-08-05 00:00:02  2012-08-05 00:00:03        AIA    33.5    33.5
               4    2012-08-05 00:00:02  2012-08-05 00:00:03        AIA    33.5    33.5
         >>> database.fetch(a.Time('2012-08-05', '2012-08-05 00:00:01'),
-        ...                a.Instrument('AIA'), overwrite=True)  # doctest: +REMOTE_DATA
+        ...                a.Instrument.aia, overwrite=True)  # doctest: +SKIP
         >>> print(display_entries(database,
         ...                       ['id', 'observation_time_start', 'observation_time_end',
-        ...                        'instrument', 'wavemin', 'wavemax']))  # doctest: +REMOTE_DATA
+        ...                        'instrument', 'wavemin', 'wavemax']))  # doctest: +SKIP
              id observation_time_start observation_time_end instrument wavemin wavemax
             --- ---------------------- -------------------- ---------- ------- -------
               3    2012-08-05 00:00:02  2012-08-05 00:00:03        AIA    33.5    33.5
@@ -533,7 +552,7 @@ class Database:
         client = kwargs.get('client', None)
         if client is None:
             client = VSOClient()
-        qr = client.search(*query)
+        qr = client.search(*query, response_format="legacy")
 
         # don't do anything if querying results in no data
         if not qr:
@@ -568,7 +587,7 @@ class Database:
 
         Parameters
         ----------
-        query : `list`
+        *query : `list`
             A variable number of attributes that are chained together via the
             boolean AND operator. The | operator may be used between attributes
             to express the boolean OR operator.
@@ -608,7 +627,7 @@ class Database:
         db_entries = walker.create(and_(*query), self.session)
 
         # If any of the DatabaseEntry-s lack the sorting attribute, the
-        # sorting key should fall back to 'id', orherwise it fails with
+        # sorting key should fall back to 'id', otherwise it fails with
         # TypeError on py3
         if any([getattr(entry, sortby) is None for entry in db_entries]):
             sortby = 'id'
@@ -647,7 +666,6 @@ class Database:
         ------
         TypeError
             If no tags are given.
-
         sunpy.database.TagAlreadyAssignedError
             If at least one of the given tags is already assigned to the given
             database entry.
@@ -729,9 +747,9 @@ class Database:
 
         Parameters
         ----------
-        database_entries : iterable of sunpy.database.tables.DatabaseEntry
-            The database entries that will be added to the database.
-
+        database_entries : list
+            The list of `~sunpy.database.tables.DatabaseEntry`
+            that will be added to the database.
         ignore_already_added : bool, optional
             See Database.add
 
@@ -762,7 +780,6 @@ class Database:
         ----------
         database_entry : sunpy.database.tables.DatabaseEntry
             The database entry that will be added to this database.
-
         ignore_already_added : bool, optional
             If True, attempts to add an already existing database entry will
             result in a :exc:`sunpy.database.EntryAlreadyAddedError`.
@@ -789,14 +806,13 @@ class Database:
         Parameters
         ----------
         query_result : list
-            The value returned by :meth:`sunpy.net.hek.HEKClient().search`
-
+            The value returned by :meth:`sunpy.net.hek.HEKClient.search`
         ignore_already_added : bool
             See :meth:`sunpy.database.Database.add`.
 
         """
         vso_qr = itertools.chain.from_iterable(
-            H2VClient().translate_and_query(query_result))
+            H2VClient().translate_and_query(query_result, vso_response_format="legacy"))
         self.add_from_vso_query_result(vso_qr, ignore_already_added)
 
     def download_from_hek_query_result(self, query_result, client=None, path=None, progress=False,
@@ -807,8 +823,8 @@ class Database:
 
         Parameters
         ----------
-        query_result : `HEKTable` or `HEKRow`
-            The value returned by :meth:`sunpy.net.hek.HEKClient().search`
+        query_result : `~sunpy.net.hek.HEKTable` or `~sunpy.net.hek.HEKRow`
+            The value returned by :meth:`sunpy.net.hek.HEKClient.search`.
         client : `sunpy.net.vso.VSOClient`, optional
             VSO Client instance to use for search and download.
             If not specified a new instance will be created.
@@ -829,7 +845,8 @@ class Database:
             return
 
         iterator = itertools.chain.from_iterable(
-            H2VClient().translate_and_query(query_result))
+            H2VClient().translate_and_query(query_result,
+                                            vso_response_format="legacy"))
 
         vso_qr = []
 
@@ -843,20 +860,17 @@ class Database:
     def download_from_vso_query_result(self, query_result, client=None,
                                        path=None, progress=False,
                                        ignore_already_added=False, overwrite=False):
-        """download(query_result, client=sunpy.net.vso.VSOClient(),
-        path=None, progress=False, ignore_already_added=False)
-
+        """
         Add new database entries from a VSO query result and download the
-        corresponding data files. See :meth:`sunpy.database.Database.download`
+        corresponding data files. See :meth:`sunpy.database.Database.fetch`
         for information about the caching mechanism used and about the
-        parameters `client`, `path`, `progress`.
+        parameters ``client``, ``path``, ``progress``.
 
         Parameters
         ----------
-        query_result : sunpy.net.vso.QueryResponse
+        query_result : sunpy.net.vso.VSOQueryResponseTable
             A VSO query response that was returned by the ``query`` method of a
             :class:`sunpy.net.vso.VSOClient` object.
-
         ignore_already_added : bool
             See :meth:`sunpy.database.Database.add`.
 
@@ -873,10 +887,9 @@ class Database:
 
         Parameters
         ----------
-        query_result : sunpy.net.vso.QueryResponse
+        query_result : sunpy.net.vso.VSOQueryResponseTable
             A VSO query response that was returned by the ``query`` method of a
             :class:`sunpy.net.vso.VSOClient` object.
-
         ignore_already_added : bool
             See :meth:`sunpy.database.Database.add`.
 
@@ -899,7 +912,6 @@ class Database:
             unified downloader. This is returned by the ``search`` method of a
             :class:`sunpy.net.fido_factory.UnifiedDownloaderFactory`
             object.
-
         ignore_already_added : `bool`
             See :meth:`sunpy.database.Database.add`.
 
@@ -910,12 +922,13 @@ class Database:
 
     def add_from_dir(self, path, recursive=False, pattern='*',
                      ignore_already_added=False, time_string_parse_format=None):
-        """Search the given directory for FITS files and use their FITS headers
+        """
+        Search the given directory for FITS files and use their FITS headers
         to add new entries to the database. Note that one entry in the database
         is assigned to a list of FITS headers, so not the number of FITS headers
         but the number of FITS files which have been read determine the number
         of database entries that will be added. FITS files are detected by
-        reading the content of each file, the `pattern` argument may be used to
+        reading the content of each file, the ``pattern`` argument may be used to
         avoid reading entire directories if one knows that all FITS files have
         the same filename extension.
 
@@ -923,26 +936,22 @@ class Database:
         ----------
         path : str
             The directory where to look for FITS files.
-
         recursive : bool, optional
             If True, the given directory will be searched recursively.
             Otherwise, only the given directory and no subdirectories are
             searched. The default is `False`, i.e. the given directory is not
             searched recursively.
-
-        pattern : string, optional
+        pattern : str, optional
             The pattern can be used to filter the list of filenames before the
             files are attempted to be read. The default is to collect all
             files. This value is passed to the function :func:`fnmatch.filter`,
             see its documentation for more information on the supported syntax.
-
         ignore_already_added : bool, optional
             See :meth:`sunpy.database.Database.add`.
-
         time_string_parse_format : str, optional
             Fallback timestamp format which will be passed to
             `~astropy.time.Time.strptime` if `sunpy.time.parse_time` is unable to
-            automatically read the `date-obs` metadata.
+            automatically read the ``date-obs`` metadata.
 
         """
         cmds = CompositeOperation()
@@ -967,11 +976,10 @@ class Database:
 
         Parameters
         ----------
-        file : str or file-like object
-            Either a path pointing to a FITS file or a an opened file-like
+        file : str, file object
+            Either a path pointing to a FITS file or an opened file-like
             object. If an opened file object, its mode must be one of the
             following rb, rb+, or ab+.
-
         ignore_already_added : bool, optional
             See :meth:`sunpy.database.Database.add`.
 
@@ -1000,8 +1008,8 @@ class Database:
 
         Parameters
         ----------
-        database_entries : iterable of sunpy.database.tables.DatabaseEntry
-            The database entries that will be removed from the database.
+        database_entries : list
+            The `~sunpy.database.tables.DatabaseEntry` that will be removed from the database.
         """
         cmds = CompositeOperation()
         for database_entry in database_entries:
@@ -1027,7 +1035,7 @@ class Database:
             remove_entry_cmd()
         try:
             del self._cache[database_entry.id]
-        except KeyError:
+        except (KeyError, ObjectDeletedError):
             # entry cannot be removed because it was already removed or never
             # existed in the database. This can be safely ignored, the user
             # doesn't even know there's a cache here
@@ -1066,7 +1074,7 @@ class Database:
         --------
         :meth:`sunpy.database.commands.CommandManager.clear_histories`
         """
-        self._command_manager.clear_histories()  # pragma: no cover
+        self._command_manager.clear_histories()
 
     def undo(self, n=1):
         """undo the last n commands.
@@ -1076,7 +1084,7 @@ class Database:
         :meth:`sunpy.database.commands.CommandManager.undo`
 
         """
-        self._command_manager.undo(n)  # pragma: no cover
+        self._command_manager.undo(n)
 
     def redo(self, n=1):
         """redo the last n commands.
@@ -1086,7 +1094,7 @@ class Database:
         :meth:`sunpy.database.commands.CommandManager.redo`
 
         """
-        self._command_manager.redo(n)  # pragma: no cover
+        self._command_manager.redo(n)
 
     def display_entries(self, columns=None, sort=False):
         print(_create_display_table(self, columns, sort))

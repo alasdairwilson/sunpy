@@ -1,16 +1,11 @@
-# -*- coding: utf-8 -*-
 # Author: Florian Mayer <florian.mayer@bitsrc.org>
 #
 # This module was developed with funding provided by
 # the ESA Summer of Code (2011).
 #
-# pylint: disable=C0103,R0903
-
 """
 Attributes that can be used to construct VSO queries.
-"""
 
-"""
 Attributes are the fundamental building blocks of queries that, together with
 the two operations of AND and OR (and in some rare cases XOR) can be used to
 construct complex queries. Most attributes can only be used once in an
@@ -18,20 +13,18 @@ AND-expression, if you still attempt to do so it is called a collision. For a
 quick example think about how the system should handle Instrument('aia') &
 Instrument('eit').
 """
-import sys
-import warnings
-from functools import singledispatch as _singledispatch
 
-import astropy.units as u
-from astropy.time import Time as AstropyTime
 
-from sunpy.util.exceptions import SunpyDeprecationWarning
+from sunpy.net import _attrs
+from sunpy.net import attr as _attr
 
-from .. import _attrs
-from .. import attr as _attr
+__all__ = ['Extent', 'Field', 'Pixels', 'Filter', 'Quicklook', 'PScale']
 
-__all__ = ['Extent', 'Field', 'Provider', 'Source', 'Pixels',
-           'Filter', 'Quicklook', 'PScale']
+
+# Define a custom __dir__ to restrict tab-completion to __all__
+def __dir__():
+    return __all__
+
 
 _TIMEFORMAT = '%Y%m%d%H%M%S'
 
@@ -41,6 +34,7 @@ class Field(_attr.ValueAttr):
     A subclass of the value attribute.  Used in defining a decorator for the
     dummy attribute.
     """
+
     def __init__(self, fielditem):
         _attr.ValueAttr.__init__(self, {
             ('field', 'fielditem'): fielditem
@@ -53,7 +47,7 @@ class Extent(_attr.DataAttr):
     the Extent attribute is not used.
 
     """
-    # pylint: disable=R0913
+
     def __init__(self, x, y, width, length, atype):
         super().__init__()
 
@@ -65,40 +59,6 @@ class Extent(_attr.DataAttr):
 
     def collides(self, other):
         return isinstance(other, self.__class__)
-
-
-class Provider(_attr.SimpleAttr):
-    """
-    Specifies the VSO data provider to search for data for.
-
-    Parameters
-    ----------
-    value : str
-
-    Notes
-    -----
-    More information about each source may be found within in the VSO Registry.
-    For a list of sources see
-    https://sdac.virtualsolar.org/cgi/show_details?keyword=PROVIDER.
-    """
-
-
-class Source(_attr.SimpleAttr):
-    """
-    Data sources that VSO can search on.
-
-    Parameters
-    ----------
-    value : str
-
-    Notes
-    -----
-    More information about each source may be found within in the VSO Registry.
-    User Interface programmers should note that some names may be encoded as
-    UTF-8. Please note that 'Source' is used internally by VSO to represent
-    what the VSO Data Model refers to as 'Observatory'.  For a list of sources
-    see https://sdac.virtualsolar.org/cgi/show_details?keyword=SOURCE.
-    """
 
 
 class Pixels(_attr.SimpleAttr):
@@ -136,13 +96,14 @@ class PScale(_attr.SimpleAttr):
     Documentation in SSWIDL routine vso_search.pro.
     """
 
+
 class Quicklook(_attr.SimpleAttr):
     """
     Retrieve 'quicklook' data if available.
 
     Parameters
     ----------
-    value : boolean
+    value : bool
         Set to True to retrieve quicklook data if available.
 
         Quicklook items are assumed to be generated with a focus on speed rather
@@ -155,6 +116,7 @@ class Quicklook(_attr.SimpleAttr):
     ----------
     Documentation in SSWIDL routine vso_search.pro.
     """
+
     def __init__(self, value):
         super().__init__(value)
         if self.value:
@@ -185,7 +147,6 @@ _walker = _attr.AttrWalker()
 
 
 @_walker.add_creator(_attr.ValueAttr, _attr.AttrAnd)
-# pylint: disable=E0102,C0103,W0613
 def _create(wlk, root, api):
     """ Implementation detail. """
     api.set_ns_prefix('VSO', 'http://virtualsolar.org/VSO/VSOi')
@@ -195,7 +156,6 @@ def _create(wlk, root, api):
 
 
 @_walker.add_applier(_attr.ValueAttr)
-# pylint: disable=E0102,C0103,W0613
 def _apply(wlk, root, api, block):
     """ Implementation detail. """
     for k, v in root.attrs.items():
@@ -216,7 +176,6 @@ def _apply(wlk, root, api, block):
 
 
 @_walker.add_applier(_attr.AttrAnd)
-# pylint: disable=E0102,C0103,W0613
 def _apply(wlk, root, api, queryblock):
     """ Implementation detail. """
     for attr in root.attrs:
@@ -224,7 +183,6 @@ def _apply(wlk, root, api, queryblock):
 
 
 @_walker.add_creator(_attr.AttrOr)
-# pylint: disable=E0102,C0103,W0613
 def _create(wlk, root, api):
     """ Implementation detail. """
     blocks = []
@@ -243,137 +201,26 @@ _walker.add_converter(Extent)(
     )
 )
 
+
 _walker.add_converter(_attrs.Time)(
     lambda x: _attr.ValueAttr({
-            ('time', 'start'): x.start.strftime(_TIMEFORMAT),
-            ('time', 'end'): x.end.strftime(_TIMEFORMAT),
-            ('time', 'near'): (
-                x.near.strftime(_TIMEFORMAT) if x.near is not None else None),
+        ('time', 'start'): x.start.strftime(_TIMEFORMAT),
+        ('time', 'end'): x.end.strftime(_TIMEFORMAT),
+        ('time', 'near'): (
+            x.near.strftime(_TIMEFORMAT) if x.near is not None else None),
     })
 )
+
 
 _walker.add_converter(_attr.SimpleAttr)(
     lambda x: _attr.ValueAttr({(x.__class__.__name__.lower(), ): x.value})
 )
 
+
 _walker.add_converter(_attrs.Wavelength)(
     lambda x: _attr.ValueAttr({
-            ('wave', 'wavemin'): x.min.value,
-            ('wave', 'wavemax'): x.max.value,
-            ('wave', 'waveunit'): x.unit.name,
+        ('wave', 'wavemin'): x.min.value,
+        ('wave', 'wavemax'): x.max.value,
+        ('wave', 'waveunit'): x.unit.name,
     })
 )
-
-# The idea of using a multi-method here - that means a method which dispatches
-# by type but is not attached to said class - is that the attribute classes are
-# designed to be used not only in the context of VSO but also elsewhere (which
-# AttrAnd and AttrOr obviously are - in the HEK module). If we defined the
-# filter method as a member of the attribute classes, we could only filter
-# one type of data (that is, VSO data).
-
-@_singledispatch
-def _filter_results(*args, **kwargs):
-    raise TypeError(f"a[0] is not a type that can filter QueryResponse objects.")
-
-
-# If we filter with ANDed together attributes, the only items are the ones
-# that match all of them - this is implementing  by ANDing the pool of items
-# with the matched items - only the ones that match everything are there
-# after this.
-@_filter_results.register(_attr.AttrAnd)
-def _(attr, results):
-    res = set(results)
-    for elem in attr.attrs:
-        res &= _filter_results(elem, res)
-    return res
-
-
-# If we filter with ORed attributes, the only attributes that should be
-# removed are the ones that match none of them. That's why we build up the
-# resulting set by ORing all the matching items.
-@_filter_results.register(_attr.AttrOr)
-def _(attr, results):
-    res = set()
-    for elem in attr.attrs:
-        res |= _filter_results(elem, results)
-    return res
-
-
-# Filter out items by comparing attributes.
-@_filter_results.register(_attr.SimpleAttr)
-def _(attr, results):
-    attrname = attr.__class__.__name__.lower()
-    return {
-        item for item in results
-        # Some servers seem to omit some fields. No way to filter there.
-        if not hasattr(item, attrname) or
-        getattr(item, attrname).lower() == attr.value.lower()
-    }
-
-
-# The dummy attribute does not filter at all.
-@_filter_results.register(_attr.DummyAttr, Field)
-def _(attr, results):
-    return set(results)
-
-
-@_filter_results.register(_attrs.Wavelength)
-def _(attr, results):
-    return {
-        it for it in results
-        if
-        it.wave.wavemax is not None
-        and
-        attr.min <= it.wave.wavemax.to(u.angstrom, equivalencies=u.spectral())
-        and
-        it.wave.wavemin is not None
-        and
-        attr.max >= it.wave.wavemin.to(u.angstrom, equivalencies=u.spectral())
-    }
-
-
-@_filter_results.register(_attrs.Time)
-def _(attr, results):
-    return {
-        it for it in results
-        if
-        it.time.end is not None
-        and
-        attr.min <= AstropyTime.strptime(it.time.end, _TIMEFORMAT)
-        and
-        it.time.start is not None
-        and
-        attr.max >= AstropyTime.strptime(it.time.start, _TIMEFORMAT)
-    }
-
-
-@_filter_results.register(Extent)
-def _(attr, results):
-    return {
-        it for it in results
-        if
-        it.extent.type is not None
-        and
-        it.extent.type.lower() == attr.type.lower()
-    }
-
-
-# Deprecate old classes
-class _DeprecatedAttr:
-    def __init__(self, *args, **kwargs):
-        name = type(self).__name__
-        warnings.warn(f"sunpy.net.vso.attrs.{name} is deprecated, please use sunpy.net.attrs.{name}",
-                      SunpyDeprecationWarning)
-        super().__init__(*args, **kwargs)
-
-_deprecated_names = ['Time', 'Instrument', 'Wavelength', 'Level', 'Sample', 'Detector', 'Resolution', 'Physobs']
-
-for _name in _deprecated_names:
-    # Dynamically construct a class which inherits the class with the
-    # deprecation warning in the __init__ first and the class it's deprecating
-    # second.
-    cls = type(_name, (_DeprecatedAttr, getattr(_attrs, _name)), {})
-    # Add the new class to the modules namespace
-    setattr(sys.modules[__name__], _name, cls)
-
-__all__ += _deprecated_names

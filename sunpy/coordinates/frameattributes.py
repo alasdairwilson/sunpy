@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 import datetime
 
 import astropy.units as u
+from astropy.coordinates import BaseCoordinateFrame, CoordinateAttribute, SkyCoord, TimeAttribute
 from astropy.time import Time
-from astropy.coordinates import TimeAttribute, CoordinateAttribute
 
 from sunpy.time import parse_time
 
@@ -54,14 +53,14 @@ class TimeFrameAttributeSunPy(TimeAttribute):
         if value is None:
             return None, False
 
-        elif value == 'now':
-            return Time(datetime.datetime.now()), True
-
         elif isinstance(value, Time):
             out = value
             converted = False
 
         elif isinstance(value, str):
+            if value == 'now':
+                return Time(datetime.datetime.now()), True
+
             try:
                 out = Time(parse_time(value))
             except Exception as err:
@@ -103,7 +102,23 @@ class ObserverCoordinateAttribute(CoordinateAttribute):
         if isinstance(value, str):
             return value, False
         else:
-            return super().convert_input(value)
+            # Make sure that the coordinate is 3D
+            if hasattr(value, 'make_3d'):
+                value = value.make_3d()
+
+            # Upgrade the coordinate to a `SkyCoord` so that frame attributes will be merged
+            if isinstance(value, BaseCoordinateFrame) and not isinstance(value, self._frame):
+                value = SkyCoord(value)
+
+            result, converted = super().convert_input(value)
+
+            # If already in the correct frame, make sure it has the default representation
+            if (not converted and isinstance(result, BaseCoordinateFrame) and
+                    not issubclass(result.representation_type, result.default_representation)):
+                result = result.replicate(representation_type=result.default_representation)
+                converted = True
+
+            return result, converted
 
     def _convert_string_to_coord(self, out, obstime):
         """
@@ -112,7 +127,6 @@ class ObserverCoordinateAttribute(CoordinateAttribute):
         """
 
         # Import here to prevent circular import
-        from .frames import HeliographicStonyhurst
         from .ephemeris import get_body_heliographic_stonyhurst
 
         obscoord = get_body_heliographic_stonyhurst(out, obstime)
@@ -133,7 +147,7 @@ class ObserverCoordinateAttribute(CoordinateAttribute):
             # If the observer is a string and we have obstime then calculate
             # the position of the observer.
             if isinstance(observer, str):
-                if obstime is not None:
+                if observer != "self" and obstime is not None:
                     new_observer = self._convert_string_to_coord(observer.lower(), obstime)
                     new_observer.object_name = observer
                     setattr(instance, '_' + self.name, new_observer)

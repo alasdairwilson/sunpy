@@ -3,25 +3,35 @@ Sun-specific coordinate calculations
 """
 import numpy as np
 
-from astropy import _erfa as erfa
+import astropy.units as u
 from astropy.constants import c as speed_of_light
-from astropy.coordinates import (SkyCoord, Angle, Latitude, Longitude, Distance,
-                                 HeliocentricMeanEcliptic, GeocentricMeanEcliptic,
-                                 ITRS, AltAz, get_body_barycentric)
+from astropy.coordinates import (
+    ITRS,
+    AltAz,
+    Angle,
+    Distance,
+    GeocentricMeanEcliptic,
+    GeocentricTrueEcliptic,
+    HeliocentricMeanEcliptic,
+    Latitude,
+    Longitude,
+    SkyCoord,
+    get_body_barycentric,
+)
 from astropy.coordinates.builtin_frames.utils import get_jd12
 from astropy.coordinates.representation import CartesianRepresentation, SphericalRepresentation
+# Import erfa via astropy to make sure we are using the same ERFA library as Astropy
+from astropy.coordinates.sky_coordinate import erfa
 from astropy.time import Time
-import astropy.units as u
 
 from sunpy import log
 from sunpy.sun import constants
 from sunpy.time import parse_time
 from sunpy.time.time import _variables_for_parse_time_docstring
 from sunpy.util.decorators import add_common_docstring
-
 from .ephemeris import get_earth
 from .frames import HeliographicStonyhurst
-from .transformations import _SUN_DETILT_MATRIX, _SOLAR_NORTH_POLE_HCRS
+from .transformations import _SOLAR_NORTH_POLE_HCRS, _SUN_DETILT_MATRIX
 
 __author__ = "Albert Y. Shih"
 __email__ = "ayshih@gmail.com"
@@ -42,13 +52,27 @@ def angular_radius(t='now'):
     """
     Return the angular radius of the Sun as viewed from Earth.
 
+    The tangent vector from the Earth to the edge of the Sun forms a
+    right-angle triangle with the radius of the Sun as the far side and the
+    Sun-Earth distance as the hypotenuse.  Thus, the sine of the angular
+    radius of the Sun is ratio of these two distances.
+
     Parameters
     ----------
     t : {parse_time_types}
         Time to use in a parse-time-compatible format
     """
-    solar_semidiameter_rad = constants.radius / earth_distance(t)
-    return Angle(solar_semidiameter_rad.to(u.arcsec, equivalencies=u.dimensionless_angles()))
+    return _angular_radius(constants.radius, earth_distance(t))
+
+
+def _angular_radius(sol_radius, distance):
+    solar_semidiameter_rad = np.arcsin(sol_radius / distance)
+    return Angle(solar_semidiameter_rad.to(u.arcsec))
+
+
+@u.quantity_input
+def _radius_from_angular_radius(angular_radius: u.arcsec, distance: u.m):
+    return np.sin(angular_radius) * distance
 
 
 @add_common_docstring(**_variables_for_parse_time_docstring())
@@ -62,7 +86,6 @@ def sky_position(t='now', equinox_of_date=True):
     ----------
     t : {parse_time_types}
         Time to use in a parse-time-compatible format
-
     equinox_of_date : `bool`
         If True, output is referred to the true equinox of date.  Otherwise, output is referred to
         the J2000.0 epoch (ICRF orientation, not dynamical orientation).
@@ -72,42 +95,67 @@ def sky_position(t='now', equinox_of_date=True):
     return ra, dec
 
 
-# Time in Julian Days (TT) of the start of the first Carrington rotation
-_FIRST_CROT_JD = 2398167.4
-# Length of a Carrington rotation in days
-_CARRINGTON_ROTATION_PERIOD = 27.2753
-
-
-def carrington_rotation_time(crot):
+@u.quantity_input
+def carrington_rotation_time(crot, longitude: u.deg = None):
     """
     Return the time of a given Carrington rotation.
 
+    Fractional Carrington rotation numbers can be provided in two ways:
+    * Fractional numbers to ``crot``
+    * Integer numbers to ``crot`` and a Carrington longitude to ``longitude``
+
+    Inputs can be arrays.  If both ``crot`` and ``longitude`` are provided, the
+    output shape will be the broadcasted combination.
     The round-trip from this method to `carrington_rotation_number` has
     absolute errors of < 0.11 seconds.
 
     Parameters
     ----------
-    crot : float
-        Carrington rotation number. Can be a fractional cycle number.
+    crot : `int`, `float`, `~astropy.units.Quantity`
+        Carrington rotation number(s). Can be a fractional rotation number.
+    longitude : `~astropy.units.Quantity`
+        Carrington longitude(s), which must be > 0 degrees and <= 360 degrees.
+        If provided, ``crot`` must be strictly integral.
 
     Returns
     -------
-    astropy.time.Time
+    `astropy.time.Time`
+
+    Examples
+    --------
+    >>> from sunpy.coordinates.sun import carrington_rotation_time
+    >>> import astropy.units as u
+    >>> carrington_rotation_time(2242)
+    <Time object: scale='utc' format='iso' value=2021-03-17 22:31:37.030>
+    >>> carrington_rotation_time(2000.25)
+    <Time object: scale='utc' format='iso' value=2003-02-27 02:52:57.315>
+    >>> carrington_rotation_time(2000, 270*u.deg)
+    <Time object: scale='utc' format='iso' value=2003-02-27 02:52:57.315>
     """
-    estimate = (_CARRINGTON_ROTATION_PERIOD * (crot - 1)) + _FIRST_CROT_JD
+    crot = crot << u.one
+    if longitude is not None:
+        if not u.allclose(crot % 1, 0):
+            raise ValueError("Carrington rotation number(s) must be integral if `longitude` is provided.")
+        if (longitude <= 0*u.deg).any() or (longitude > 360*u.deg).any():
+            raise ValueError("Carrington longitude(s) must be > 0 degrees and <= 360 degrees.")
+        crot = crot + (1 - longitude/(360*u.deg))
+    estimate = (constants.mean_synodic_period *
+                (crot - 1)) + constants.first_carrington_rotation
 
     # The above estimate is inaccurate (see comments below in carrington_rotation_number),
     # so put the estimate into carrington_rotation_number to determine a correction amount
     def refine(estimate):
-        crot_estimate = carrington_rotation_number(t=Time(estimate, scale='tt', format='jd'))
+        crot_estimate = carrington_rotation_number(estimate)
         dcrot = crot - crot_estimate
         # Correct the estimate using a linear fraction of the Carrington rotation period
-        return estimate + (dcrot * _CARRINGTON_ROTATION_PERIOD)
+        return estimate + (dcrot * constants.mean_synodic_period)
 
     # Perform two iterations of the correction to achieve sub-second accuracy
     estimate = refine(estimate)
     estimate = refine(estimate)
-    return Time(estimate, scale='tt', format='jd')
+    t = Time(estimate, scale='tt', format='jd').utc
+    t.format = 'iso'
+    return t
 
 
 @add_common_docstring(**_variables_for_parse_time_docstring())
@@ -127,7 +175,7 @@ def carrington_rotation_number(t='now'):
     # Estimate the Carrington rotation number by dividing the time that has elapsed since
     # JD 2398167.4 (late in the day on 1853 Nov 9), see Astronomical Algorithms (Meeus 1998, p.191),
     # by the mean synodic period (27.2753 days)
-    estimate = (time.tt.jd - _FIRST_CROT_JD) / _CARRINGTON_ROTATION_PERIOD + 1
+    estimate = (time - constants.first_carrington_rotation) / constants.mean_synodic_period + 1
     estimate_int, estimate_frac = divmod(estimate, 1)
 
     # The fractional rotation number from the above estimate is inaccurate, so calculate the actual
@@ -141,7 +189,7 @@ def carrington_rotation_number(t='now'):
 
     log.debug(f"Carrington rotation number: estimate is {estimate}, actual is {actual}")
 
-    return actual
+    return actual.to_value(u.one)
 
 
 @add_common_docstring(**_variables_for_parse_time_docstring())
@@ -183,12 +231,10 @@ def apparent_longitude(t='now'):
     """
     time = parse_time(t)
     sun = SkyCoord(0*u.deg, 0*u.deg, 0*u.AU, frame='hcrs', obstime=time)
-    coord = sun.transform_to(GeocentricMeanEcliptic(equinox=time))
+    coord = sun.transform_to(GeocentricTrueEcliptic(equinox=time))
 
-    # Astropy's GeocentricMeanEcliptic already includes aberration, so only add nutation
-    jd1, jd2 = get_jd12(time, 'tt')
-    nut_lon, _ = erfa.nut06a(jd1, jd2)*u.radian
-    lon = coord.lon + nut_lon
+    # Astropy's GeocentricTrueEcliptic includes both aberration and nutation
+    lon = coord.lon
 
     return Longitude(lon)
 
@@ -228,9 +274,9 @@ def apparent_latitude(t='now'):
     """
     time = parse_time(t)
     sun = SkyCoord(0*u.deg, 0*u.deg, 0*u.AU, frame='hcrs', obstime=time)
-    coord = sun.transform_to(GeocentricMeanEcliptic(equinox=time))
+    coord = sun.transform_to(GeocentricTrueEcliptic(equinox=time))
 
-    # Astropy's GeocentricMeanEcliptic does not include nutation, but the contribution is negligible
+    # Astropy's GeocentricTrueEcliptic includes both aberration and nutation
     lat = coord.lat
 
     return Latitude(lat)
@@ -265,7 +311,6 @@ def true_rightascension(t='now', equinox_of_date=True):
     ----------
     t : {parse_time_types}
         Time to use in a parse-time-compatible format
-
     equinox_of_date : `bool`
         If True, output is referred to the mean equinox of date.  Otherwise, output is referred to
         the J2000.0 epoch (ICRF orientation, not dynamical orientation).
@@ -301,7 +346,6 @@ def true_declination(t='now', equinox_of_date=True):
     ----------
     t : {parse_time_types}
         Time to use in a parse-time-compatible format
-
     equinox_of_date : `bool`
         If True, output is referred to the mean equinox of date.  Otherwise, output is referred to
         the J2000.0 epoch (ICRF orientation, not dynamical orientation).
@@ -357,7 +401,6 @@ def apparent_rightascension(t='now', equinox_of_date=True):
     ----------
     t : {parse_time_types}
         Time to use in a parse-time-compatible format
-
     equinox_of_date : `bool`
         If True, output is referred to the true equinox of date.  Otherwise, output is referred to
         the J2000.0 epoch (ICRF orientation, not dynamical orientation).
@@ -390,7 +433,6 @@ def apparent_declination(t='now', equinox_of_date=True):
     ----------
     t : {parse_time_types}
         Time to use in a parse-time-compatible format
-
     equinox_of_date : `bool`
         If True, output is referred to the true equinox of date.  Otherwise, output is referred to
         the J2000.0 epoch (ICRF orientation, not dynamical orientation).
@@ -451,7 +493,6 @@ def B0(time='now'):
         * The heliographic latitude of Earth
         * The tilt of the solar North rotational axis toward Earth
 
-
     Parameters
     ----------
     time : {parse_time_types}
@@ -459,10 +500,10 @@ def B0(time='now'):
 
     Returns
     -------
-    out : `~astropy.coordinates.Angle`
+    out : `~astropy.coordinates.Latitude`
         The position angle
     """
-    return Angle(get_earth(time).lat)
+    return Latitude(get_earth(time).lat)
 
 
 # Function returns a SkyCoord's longitude in the de-tilted frame (HCRS rotated so that the Sun's
@@ -483,7 +524,7 @@ _NODE = SkyCoord(_SOLAR_NORTH_POLE_HCRS.lon + 90*u.deg, 0*u.deg, frame='hcrs')
 # The longitude in the de-tilted frame of the Sun's prime meridian.
 # The IAU (Seidelmann et al. 2007 and later) defines the true longitude of the meridian (i.e.,
 # without light travel time to Earth and aberration effects) as 84.176 degrees eastward at J2000.
-_DLON_MERIDIAN = Longitude(_detilt_lon(_NODE) + 84.176*u.deg)
+_DLON_MERIDIAN = Longitude(_detilt_lon(_NODE) + constants.get('W_0'))
 
 
 @add_common_docstring(**_variables_for_parse_time_docstring())
@@ -561,7 +602,8 @@ def L0(time='now',
     antetime = (obstime - distance / speed_of_light) if light_travel_time_correction else obstime
 
     # Calculate the de-tilt longitude of the meridian due to the Sun's sidereal rotation
-    dlon_meridian = Longitude(_DLON_MERIDIAN + (antetime - _J2000) * 14.1844*u.deg/u.day)
+    dlon_meridian = Longitude(_DLON_MERIDIAN + (antetime - _J2000)
+                              * constants.sidereal_rotation_rate)
 
     return Longitude(dlon_earth - dlon_meridian)
 

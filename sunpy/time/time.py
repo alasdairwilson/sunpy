@@ -10,10 +10,10 @@ import numpy as np
 
 import astropy.time
 import astropy.units as u
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 
-# This is not called but imported to register it
-from sunpy.time.utime import TimeUTime  # noqa
+# This is not called but imported to register time formats
+from sunpy.time.timeformats import *  # NOQA
 from sunpy.util.decorators import add_common_docstring
 
 __all__ = [
@@ -59,9 +59,14 @@ TIME_FORMAT_LIST = [
     "%Y%m%d_%H%M%S",  # Example 20070504_210812
     "%Y:%j:%H:%M:%S",  # Example 2012:124:21:08:12
     "%Y:%j:%H:%M:%S.%f",  # Example 2012:124:21:08:12.999999
-    "%Y%m%d%H%M%S",  # Example 20140101000001 (JSOC / VSO)
-    "%Y.%m.%d_%H:%M:%S_TAI",  # Example 2016.05.04_21:08:12_TAI
+    "%Y%m%d%H%M%S",  # Example 20140101000001 (JSOC/VSO Export/Downloads)
+    "%Y.%m.%d_%H:%M:%S_TAI",  # Example 2016.05.04_21:08:12_TAI - JSOC
+    "%Y.%m.%d_%H:%M:%S_UTC",  # Example 2016.05.04_21:08:12_UTC - JSOC
+    "%Y.%m.%d_%H:%M:%S",  # Example 2016.05.04_21:08:12 - JSOC
+    "%Y/%m/%dT%H:%M",  # Example 2007/05/04T21:08
 ]
+
+_ONE_DAY_TIMEDELTA = TimeDelta(1 * u.day)
 
 
 def is_time_equal(t1, t2):
@@ -100,15 +105,15 @@ def _regex_parse_time(inp, format):
     try:
         hour = match.group("hour")
     except IndexError:
-        return inp, astropy.time.TimeDelta(0 * u.day)
+        return inp, False
     if hour == "24":
         if not all(
                 _n_or_eq(_group_or_none(match, g, int), 00)
                 for g in ["minute", "second", "microsecond"]):
             raise ValueError
         from_, to = match.span("hour")
-        return inp[:from_] + "00" + inp[to:], astropy.time.TimeDelta(1 * u.day)
-    return inp, astropy.time.TimeDelta(0 * u.day)
+        return inp[:from_] + "00" + inp[to:], True
+    return inp, False
 
 
 def find_time(string, format):
@@ -146,7 +151,7 @@ try:
 
     @convert_time.register(pandas.Timestamp)
     def convert_time_pandasTimestamp(time_string, **kwargs):
-        return Time(time_string.to_pydatetime())
+        return Time(time_string.asm8)
 
     @convert_time.register(pandas.Series)
     def convert_time_pandasSeries(time_string, **kwargs):
@@ -195,6 +200,19 @@ def convert_time_astropy(time_string, **kwargs):
     return time_string
 
 
+@convert_time.register(list)
+def convert_time_list(time_list, format=None, **kwargs):
+    item = time_list[0]
+    # If we have a list of strings, need to get the correct format from our
+    # list of custom formats.
+    if isinstance(item, str) and format is None:
+        string_format = _get_time_fmt(item)
+        return Time.strptime(time_list, string_format, **kwargs)
+
+    # Otherwise return the default method
+    return convert_time.dispatch(object)(time_list, format, **kwargs)
+
+
 @convert_time.register(str)
 def convert_time_str(time_string, **kwargs):
     # remove trailing zeros and the final dot to allow any
@@ -208,17 +226,31 @@ def convert_time_str(time_string, **kwargs):
     for time_format in TIME_FORMAT_LIST:
         try:
             try:
-                ts, time_delta = _regex_parse_time(time_string, time_format)
+                ts, add_one_day = _regex_parse_time(time_string, time_format)
             except TypeError:
                 break
             if ts is None:
                 continue
-            return Time.strptime(ts, time_format, **kwargs) + time_delta
+            t = Time.strptime(ts, time_format, **kwargs)
+            if add_one_day:
+                t += _ONE_DAY_TIMEDELTA
+            return t
         except ValueError:
             pass
 
     # when no format matches, call default fucntion
     return convert_time.dispatch(object)(time_string, **kwargs)
+
+
+def _get_time_fmt(time_string):
+    """
+    Try all the formats in TIME_FORMAT_LIST to work out which one applies to
+    the time string.
+    """
+    for time_format in TIME_FORMAT_LIST:
+        ts, _ = _regex_parse_time(time_string, time_format)
+        if ts is not None:
+            return time_format
 
 
 def _variables_for_parse_time_docstring():
@@ -234,14 +266,22 @@ def _variables_for_parse_time_docstring():
     # Do Builtins
     types2 = [t.__qualname__ for t in types if t.__module__ == "builtins"]
     # # Do all the non-special ones where we take the package name and the class
-    types2 += [t.__module__.split(".")[0] + "." + t.__qualname__ for t in types if not t.__module__.startswith(("builtins", "astropy"))]
+    types2 += [t.__module__.split(".")[0] + "." +
+               t.__qualname__ for t in types if not t.__module__.startswith(("builtins", "astropy"))]
     # Special case astropy.time where we need the subpackage
-    types2 += ["astropy.time." + t.__qualname__ for t in types if t.__module__.startswith("astropy.time")]
+    types2 += ["astropy.time." +
+               t.__qualname__ for t in types if t.__module__.startswith("astropy.time")]
     parse_time_types = str(types2)[1:-1].replace("'", "`")
     ret['parse_time_types'] = parse_time_types
     ret['parse_time_desc'] = """
                              Any time input, will be passed into `~sunpy.time.parse_time`.
                              """
+    try:
+        # Need to try importing cdflib, as if it is present it will register
+        # extra formats with time
+        import cdflib  # NOQA
+    except Exception:
+        pass
     ret['astropy_time_formats'] = textwrap.fill(str(list(astropy.time.Time.FORMATS.keys())),
                                                 subsequent_indent=' '*10)
 
@@ -257,6 +297,7 @@ def parse_time(time_string, *, format=None, **kwargs):
     ----------
     time_string : {parse_time_types}
         Time to parse.
+
     format : `str`, optional
         Specifies the format user has provided the time_string in.
         We support the same formats of `astropy.time.Time`.

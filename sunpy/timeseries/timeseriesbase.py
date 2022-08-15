@@ -3,20 +3,31 @@ This module provies `sunpy.timeseries.GenericTimeSeries` which all other
 `sunpy.timeseries.TimeSeries` classes inherit from.
 """
 import copy
-import warnings
+import html
+import time
+import textwrap
+import webbrowser
+from tempfile import NamedTemporaryFile
 from collections import OrderedDict
+from collections.abc import Iterable
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 import astropy
 import astropy.units as u
 from astropy.table import Column, Table
+from astropy.time import Time
+from astropy.visualization import hist
 
 from sunpy import config
 from sunpy.time import TimeRange
 from sunpy.timeseries import TimeSeriesMetaData
-from sunpy.util.exceptions import SunpyUserWarning
+from sunpy.util.datatype_factory_base import NoMatchError
+from sunpy.util.exceptions import warn_deprecated, warn_user
 from sunpy.util.metadata import MetaDict
+from sunpy.util.util import _figure_to_base64
 from sunpy.visualization import peek_show
 
 # define and register a new unit, needed for RHESSI
@@ -34,8 +45,8 @@ class GenericTimeSeries:
 
     Parameters
     ----------
-    data : `~pandas.DataFrame`
-        A `pandas.DataFrame` representing one or more fields as a function of time.
+    data : `~pandas.DataFrame` or `numpy.array`
+        A `pandas.DataFrame` or `numpy.array` representing one or more fields as a function of time.
     meta : `~sunpy.timeseries.metadata.TimeSeriesMetaData`, optional
         The metadata giving details about the time series data/instrument.
         Defaults to `None`.
@@ -48,7 +59,7 @@ class GenericTimeSeries:
     meta : `~sunpy.timeseries.metadata.TimeSeriesMetaData`
         The metadata giving details about the time series data/instrument.
     units : `dict`
-        A mapping from column names in ``data`` to the physical units ofthat column.
+        A mapping from column names in ``data`` to the physical units of that column.
 
     Examples
     --------
@@ -61,7 +72,9 @@ class GenericTimeSeries:
     >>> times = parse_time("now") - TimeDelta(np.arange(24 * 60)*u.minute)
     >>> intensity = np.sin(np.arange(0, 12 * np.pi, step=(12 * np.pi) / (24 * 60)))
     >>> df = pd.DataFrame(intensity, index=times, columns=['intensity'])
-    >>> ts = TimeSeries(df)
+    >>> header = {}
+    >>> units = {'intensity': u.W/u.m**2}
+    >>> ts = TimeSeries(df, header, units)
     >>> ts.peek()  # doctest: +SKIP
 
     References
@@ -71,6 +84,9 @@ class GenericTimeSeries:
     # Class attribute used to specify the source class of the TimeSeries.
     _source = None
     _registry = dict()
+
+    # Title to show when .peek()ing
+    _peek_title = ''
 
     def __init_subclass__(cls, **kwargs):
         """
@@ -94,13 +110,13 @@ class GenericTimeSeries:
         # Check metadata input
         if meta is None:
             # No meta given, so default
-            self.meta = TimeSeriesMetaData(MetaDict(), tr, list(self._data.columns.values))
+            self.meta = TimeSeriesMetaData(MetaDict(), tr, self.columns)
         elif isinstance(meta, (dict, OrderedDict, MetaDict)):
             # Given the values for metadata (dict) and infer timerange and colnames from the data
-            self.meta = TimeSeriesMetaData(meta, tr, list(self._data.columns.values))
+            self.meta = TimeSeriesMetaData(meta, tr, self.columns)
         elif isinstance(meta, tuple):
             # Given the values all in a tuple
-            self.meta = TimeSeriesMetaData(meta, tr, list(self._data.columns.values))
+            self.meta = TimeSeriesMetaData(meta, tr, self.columns)
         else:
             # Should have a list of 3-tuples giving a complex metadata list.
             self.meta = meta
@@ -109,6 +125,11 @@ class GenericTimeSeries:
             self.units = {}
         else:
             self.units = units
+
+        for col in self.columns:
+            if col not in self.units:
+                warn_user(f'Unknown units for {col}')
+                self.units[col] = u.dimensionless_unscaled
 
         # TODO: Fix this?
         # Validate input data
@@ -122,8 +143,8 @@ class GenericTimeSeries:
         """
         A `pandas.DataFrame` representing one or more fields as a function of time.
         """
-        warnings.warn("Using .data to access the dataframe is discouraged; "
-                      "use .to_dataframe() instead.", SunpyUserWarning)
+        warn_user("Using .data to access the dataframe is discouraged; "
+                  "use .to_dataframe() instead.")
         return self._data
 
     @data.setter
@@ -138,6 +159,13 @@ class GenericTimeSeries:
         return self._source
 
     @property
+    def observatory(self):
+        """
+        A string/object used to specify the observatory for the TimeSeries.
+        """
+        return
+
+    @property
     def columns(self):
         """
         A list of all the names of the columns in the data.
@@ -149,7 +177,19 @@ class GenericTimeSeries:
         """
         The time index of the data.
         """
-        return self._data.index
+        warn_deprecated('.index is deprecatd. Use .time instead to get an astropy.time.Time object, '
+                        'or ts.to_dataframe().index to get a pandas DateTimeIndex.')
+        return self.to_dataframe().index
+
+    @property
+    def time(self):
+        """
+        The timestamps of the data.
+        """
+        t = Time(self._data.index)
+        # Set time format to enable plotting with astropy.visualisation.time_support()
+        t.format = 'iso'
+        return t
 
     @property
     def shape(self):
@@ -168,7 +208,220 @@ class GenericTimeSeries:
         else:
             return None
 
+    @property
+    def url(self):
+        """
+        URL to the mission website.
+        """
+        return self._url
+
 # #### Data Access, Selection and Organisation Methods #### #
+
+    def _text_summary(self):
+        """
+        Produces a table summary of the timeseries data to be passed to
+        the _repr_html_ function.
+        """
+        obs = self.observatory
+        if obs is None:
+            try:
+                obs = self.meta.metadata[0][2]["telescop"]
+            except KeyError:
+                obs = "Unknown"
+        try:
+            inst = self.meta.metadata[0][2]["instrume"]
+        except KeyError:
+            inst = "Unknown"
+        try:
+            link = f"""<a href={self.url} target="_blank">{inst}</a>"""
+        except AttributeError:
+            link = inst
+        dat = self.to_dataframe()
+        drange = dat.max() - dat.min()
+        drange = drange.to_string(float_format="{:.2E}".format)
+        drange = drange.replace("\n", "<br>")
+
+        center = self.time_range.center.value.astype('datetime64[s]')
+        center = str(center).replace("T", " ")
+        resolution = round(self.time_range.seconds.value/self.shape[0], 3)
+        resolution = str(resolution)+" s"
+
+        channels = self.columns
+        channels = "<br>".join(channels)
+
+        uni = list(set(self.units.values()))
+        uni = [x.unit if type(x) == u.quantity.Quantity else x for x in uni]
+        uni = ["dimensionless" if x == u.dimensionless_unscaled else x for x in uni]
+        uni = "<br>".join(str(x) for x in uni)
+
+        return textwrap.dedent(f"""\
+                   SunPy TimeSeries
+                   ----------------
+                   Observatory:\t\t {obs}
+                   Instrument:\t\t {link}
+                   Channel(s):\t\t {channels}
+                   Start Date:\t\t {dat.index.min().round('s')}
+                   End Date:\t\t {dat.index.max().round('s')}
+                   Center Date:\t\t {center}
+                   Resolution:\t\t {resolution}
+                   Samples per Channel:\t\t {self.shape[0]}
+                   Data Range(s):\t\t {drange}
+                   Units:\t\t {uni}""")
+
+    def __str__(self):
+        return f"{self._text_summary()}\n{self._data.__repr__()}"
+
+    def __repr__(self):
+        return f"{object.__repr__(self)}\n{self}"
+
+    def _repr_html_(self):
+        """
+        Produces an HTML summary of the timeseries data with plots for use in
+        Jupyter notebooks.
+        """
+        # Call _text_summary and reformat as an HTML table
+        partial_html = (
+            self._text_summary()[34:]
+            .replace("\n", "</td></tr><tr><th>")
+            .replace(":\t", "</th><td>")
+        )
+        text_to_table = (
+            f"""\
+            <table style='text-align:left'>
+                <tr><th>{partial_html}</td></tr>
+            </table>"""
+        ).replace("\n", "")
+
+        # Create the timeseries plots for each channel as a panel in one
+        # figure. The color list below is passed to both timeseries and
+        # histogram plotting methods for consistency.
+        cols = ['b', 'g', 'r', 'c', 'm', 'y', 'tab:blue', 'tab:orange',
+                'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray',
+                'tab:green', 'tab:olive', 'tab:cyan', 'palegreen', 'pink'
+                ]
+        dat = self.to_dataframe()
+        fig, axs = plt.subplots(
+            nrows=len(self.columns),
+            ncols=1,
+            sharex=True,
+            constrained_layout=True,
+            figsize=(6, 10),
+        )
+        # If all channels have the same unit, then one shared y-axis
+        # label is set. Otherwise, each subplot has its own yaxis label.
+        for i in range(len(self.columns)):
+            if len(self.columns) == 1:
+                axs.plot(
+                    dat.index,
+                    dat[self.columns[i]].values,
+                    color=cols[i],
+                    label=self.columns[i],
+                )
+                if (dat[self.columns[i]].values < 0).any() is np.bool_(False):
+                    axs.set_yscale("log")
+                axs.legend(frameon=False, handlelength=0)
+                axs.set_ylabel(self.units[self.columns[i]])
+            else:
+                axs[i].plot(
+                    dat.index,
+                    dat[self.columns[i]].values,
+                    color=cols[i],
+                    label=self.columns[i],
+                )
+                if (dat[self.columns[i]].values < 0).any() is np.bool_(False):
+                    axs[i].set_yscale("log")
+                axs[i].legend(frameon=False, handlelength=0)
+                axs[i].set_ylabel(self.units[self.columns[i]])
+        plt.xticks(rotation=30)
+        spc = _figure_to_base64(fig)
+        plt.close(fig)
+        # Make histograms for each column of data. The histograms are
+        # created using the Astropy hist method that uses Scott's rule
+        # for bin sizes.
+        hlist = []
+        for i in range(len(dat.columns)):
+            if set(np.isnan(dat[self.columns[i]].values)) != {True}:
+                fig = plt.figure(figsize=(5, 3), constrained_layout=True)
+                hist(
+                    dat[self.columns[i]].values[~np.isnan(dat[self.columns[i]].values)],
+                    log=True,
+                    bins="scott",
+                    color=cols[i],
+                )
+                plt.title(self.columns[i] + " [click for other channels]")
+                plt.xlabel(self.units[self.columns[i]])
+                plt.ylabel("# of occurences")
+                hlist.append(_figure_to_base64(fig))
+                plt.close(fig)
+
+        # This loop creates a formatted list of base64 images that is passed
+        # directly into the JS script below, so all images are written into
+        # the html page when it is created (allows for an arbitrary number of
+        # histograms to be rotated through onclick).
+        hlist2 = []
+        for i in range(len(hlist)):
+            hlist2.append(f"data:image/png;base64,{hlist[i]}")
+
+        # The code below creates unique names to be passed to the JS script
+        # in the html code. Otherwise, multiple timeseries summaries will
+        # conflict in a single notebook.
+        source = str(self.source) + str(time.perf_counter_ns())
+
+        return textwrap.dedent(f"""\
+            <pre>{html.escape(object.__repr__(self))}</pre>
+            <script type="text/javascript">
+            function ImageChange(images) {{
+                this.images = images;
+                this.i = 0;
+                this.next = function(img) {{
+                    this.i++;
+                    if (this.i == images.length)
+                    this.i = 0;
+                    img.src = images[this.i];
+                }}
+            }}
+            var {source} = new ImageChange({hlist2});
+            </script>
+            <table>
+                <tr>
+                    <td style='width:40%'>{text_to_table}</td>
+                    <td rowspan=3>
+                        <img src='data:image/png;base64,{spc}'/>
+                    </td>
+                </tr>
+                <tr>
+                </tr>
+                <tr>
+                    <td>
+                    <img src="{hlist2[0]}" alt="Click here for histograms"
+                         onclick="{source}.next(this)"/>
+                    </td>
+                </tr>
+            </table>""")
+
+    def quicklook(self):
+        """
+        Display a quicklook summary of the Timeseries instance in the default
+        webbrowser.
+
+        Example
+        -------
+        >>> from sunpy.timeseries import TimeSeries
+        >>> import sunpy.data.sample  # doctest: +REMOTE_DATA
+        >>> goes_lc = TimeSeries(sunpy.data.sample.GOES_XRS_TIMESERIES)  # doctest: +REMOTE_DATA
+        >>> goes_lc.quicklook()  # doctest: +SKIP
+        """
+        with NamedTemporaryFile(
+            "w", delete=False, prefix="sunpy.timeseries.", suffix=".html"
+        ) as f:
+            url = "file://" + f.name
+            f.write(textwrap.dedent(f"""\
+                <html>
+                    <title>Quicklook summary for {html.escape(object.__repr__(self))}</title>
+                    <body>{self._repr_html_()}</body>
+                </html>""")
+                    )
+        webbrowser.open_new_tab(url)
 
     def quantity(self, colname, **kwargs):
         """
@@ -219,7 +472,7 @@ class GenericTimeSeries:
         units = copy.copy(self.units)
 
         # Add the unit to the units dictionary if already there.
-        if not (colname in self._data.columns):
+        if not (colname in self.columns):
             units[colname] = unit
 
         # Convert the given quantity into values for given units if necessary.
@@ -228,7 +481,7 @@ class GenericTimeSeries:
             values = values.to(units[colname]).value
 
         # Update or add the data.
-        if not (colname in self._data.columns) or overwrite:
+        if not (colname in self.columns) or overwrite:
             data[colname] = values
 
         # Return a new TimeSeries with the given updated/added column.
@@ -250,7 +503,7 @@ class GenericTimeSeries:
         """
         if colname not in self.columns:
             raise ValueError(f'Given column name ({colname}) not in list of columns {self.columns}')
-        data = self._data.drop(colname, 'columns')
+        data = self._data.drop(colname, axis='columns')
         units = self.units.copy()
         units.pop(colname)
         return self.__class__(data, self.meta, units)
@@ -319,7 +572,6 @@ class GenericTimeSeries:
         # Build similar TimeSeries object and sanatise metadata and units.
         object = self.__class__(truncated_data.sort_index(), truncated_meta, copy.copy(self.units))
         object._sanitize_metadata()
-        object._sanitize_units()
         return object
 
     def extract(self, column_name):
@@ -345,26 +597,27 @@ class GenericTimeSeries:
 
         # Extract column and remove empty rows
         data = self._data[[column_name]].dropna()
+        units = {column_name: self.units[column_name]}
 
         # Build generic TimeSeries object and sanatise metadata and units.
         object = GenericTimeSeries(data.sort_index(),
                                    TimeSeriesMetaData(copy.copy(self.meta.metadata)),
-                                   copy.copy(self.units))
+                                   units)
         object._sanitize_metadata()
-        object._sanitize_units()
         return object
 
-    def concatenate(self, otherts, same_source=False, **kwargs):
+    def concatenate(self, others, same_source=False, **kwargs):
         """
-        Concatenate with another `~sunpy.timeseries.TimeSeries`. This function
-        will check and remove any duplicate times. It will keep the column
-        values from the original timeseries to which the new time series is
-        being added.
+        Concatenate with another `~sunpy.timeseries.TimeSeries` or an iterable containing multiple
+        `~sunpy.timeseries.TimeSeries`. This function will check and remove any duplicate times.
+        It will keep the column values from the original timeseries to which the new time
+        series is being added.
 
         Parameters
         ----------
-        otherts : `~sunpy.timeseries.TimeSeries`
-            Another `~sunpy.timeseries.TimeSeries`.
+        others : `~sunpy.timeseries.TimeSeries` or `collections.abc.Iterable`
+            Another `~sunpy.timeseries.TimeSeries` or an iterable containing multiple
+            `~sunpy.timeseries.TimeSeries`.
         same_source : `bool`, optional
             Set to `True` to check if the sources of the time series match. Defaults to `False`.
 
@@ -376,28 +629,61 @@ class GenericTimeSeries:
         Notes
         -----
         Extra keywords are passed to `pandas.concat`.
+
+        Examples
+        --------
+        A single `~sunpy.timeseries.TimeSeries` or an `collections.abc.Iterable` containing multiple
+        `~sunpy.timeseries.TimeSeries` can be passed to concatenate.
+
+        >>> timeseries_1.concatenate(timeseries_2) # doctest: +SKIP
+        >>> timeseries_1.concatenate([timeseries_2, timeseries_3]) # doctest: +SKIP
+
+        Set ``same_source`` to `True` if the sources of the time series are the same.
+
+        >>> timeseries_1.concatenate([timeseries_2, timeseries_3], same_source=True) # doctest: +SKIP
         """
-        # TODO: decide if we want to be able to concatenate multiple time series at once.
-        # check to see if nothing needs to be done
-        if self == otherts:
+        # Check to see if nothing needs to be done in case the same TimeSeries is provided.
+        if self == others:
             return self
+        elif isinstance(others, Iterable):
+            if len(others) == 1 and self == next(iter(others)):
+                return self
 
         # Check the sources match if specified.
-        if same_source and not (isinstance(otherts, self.__class__)):
-            raise TypeError("TimeSeries classes must match if specified.")
+        if (
+            same_source
+            and isinstance(others, Iterable)
+            and not all(isinstance(series, self.__class__) for series in others)
+        ):
+            raise TypeError("TimeSeries classes must match if 'same_source' is specified.")
+        elif (
+            same_source
+            and not isinstance(others, Iterable)
+            and not isinstance(others, self.__class__)
+        ):
+            raise TypeError("TimeSeries classes must match if 'same_source' is specified.")
 
-        # Concatenate the metadata and data
-        kwargs['sort'] = kwargs.pop('sort', False)
-        meta = self.meta.concatenate(otherts.meta)
-        data = pd.concat([self._data.copy(), otherts.to_dataframe()], **kwargs)
+        # If an iterable is not provided, it must be a TimeSeries object, so wrap it in a list.
+        if not isinstance(others, Iterable):
+            others = [others]
+
+        # Concatenate the metadata and data.
+        kwargs["sort"] = kwargs.pop("sort", False)
+        meta = self.meta.concatenate([series.meta for series in others])
+        data = pd.concat(
+            [self._data.copy(), *list(series.to_dataframe() for series in others)], **kwargs
+        )
 
         # Add all the new units to the dictionary.
         units = OrderedDict()
         units.update(self.units)
-        units.update(otherts.units)
+        units.update(
+            {k: v for unit in list(series.units for series in others) for k, v in unit.items()}
+        )
+        units = {k: v for k, v in units.items() if k in data.columns}
 
         # If sources match then build similar TimeSeries.
-        if self.__class__ == otherts.__class__:
+        if all(self.__class__ == series.__class__ for series in others):
             object = self.__class__(data.sort_index(), meta, units)
         else:
             # Build generic time series if the sources don't match.
@@ -405,12 +691,11 @@ class GenericTimeSeries:
 
         # Sanatise metadata and units
         object._sanitize_metadata()
-        object._sanitize_units()
         return object
 
 # #### Plotting Methods #### #
 
-    def plot(self, axes=None, **plot_args):
+    def plot(self, axes=None, columns=None, **plot_args):
         """
         Plot a plot of the `~sunpy.timeseries.TimeSeries`.
 
@@ -419,26 +704,67 @@ class GenericTimeSeries:
         axes : `~matplotlib.axes.Axes`, optional
             If provided the image will be plotted on the given axes.
             Defaults to `None`, so the current axes will be used.
+        columns : list[str], optional
+            If provided, only plot the specified columns.
         **plot_args : `dict`, optional
             Additional plot keyword arguments that are handed to
             :meth:`pandas.DataFrame.plot`.
 
         Returns
         -------
-        axes : `~matplotlib.axes.Axes`
+        `~matplotlib.axes.Axes`
             The plot axes.
         """
-        import matplotlib.pyplot as plt
-        # Get current axes
-        if axes is None:
-            axes = plt.gca()
+        axes, columns = self._setup_axes_columns(axes, columns)
 
-        axes = self._data.plot(ax=axes, **plot_args)
+        axes = self._data[columns].plot(ax=axes, **plot_args)
 
+        units = set([self.units[col] for col in columns])
+        if len(units) == 1:
+            # If units of all columns being plotted are the same, add a unit
+            # label to the y-axis.
+            unit = u.Unit(list(units)[0])
+            axes.set_ylabel(unit.to_string())
+
+        self._setup_x_axis(axes)
         return axes
 
+    def _setup_axes_columns(self, axes, columns, *, subplots=False):
+        """
+        Validate data for plotting, and get default axes/columns if not passed
+        by the user.
+        """
+        import matplotlib.pyplot as plt
+
+        self._validate_data_for_plotting()
+        if columns is None:
+            columns = self.columns
+        if axes is None:
+            if not subplots:
+                axes = plt.gca()
+            else:
+                axes = plt.gcf().subplots(ncols=1, nrows=len(columns), sharex=True)
+
+        return axes, columns
+
+    @staticmethod
+    def _setup_x_axis(ax):
+        """
+        Shared code to set x-axis properties.
+        """
+        import matplotlib.dates as mdates
+        if isinstance(ax, np.ndarray):
+            ax = ax[-1]
+
+        locator = ax.xaxis.get_major_locator()
+        formatter = ax.xaxis.get_major_formatter()
+        if isinstance(formatter, mdates.AutoDateFormatter):
+            # Override Matplotlib default date formatter (concise one is better)
+            # but don't override any formatters pandas might have set
+            ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+
     @peek_show
-    def peek(self, **kwargs):
+    def peek(self, columns=None, *, title=None, **kwargs):
         """
         Displays a graphical overview of the data in this object for user evaluation.
         For the creation of plots, users should instead use the
@@ -446,16 +772,21 @@ class GenericTimeSeries:
 
         Parameters
         ----------
+        columns : list[str], optional
+            If provided, only plot the specified columns.
+        title : str, optional
+            If provided, set the plot title. Custom timeseries sources may set
+            a default value for this.
         **kwargs : `dict`
             Any additional plot arguments that should be used when plotting.
         """
         import matplotlib.pyplot as plt
-        # Check we have a timeseries valid for plotting
-        self._validate_data_for_plotting()
 
         # Now make the plot
         figure = plt.figure()
-        self.plot(**kwargs)
+        self.plot(columns=columns, **kwargs)
+        title = title or self._peek_title
+        figure.suptitle(title)
 
         return figure
 
@@ -484,14 +815,12 @@ class GenericTimeSeries:
         specific validation should be handled in the relevant file in
         the "sunpy.timeseries.sources".
         """
-        warnings.simplefilter('always', Warning)
-
         for meta_property in ('cunit1', 'cunit2', 'waveunit'):
             if (self.meta.get(meta_property) and
                 u.Unit(self.meta.get(meta_property),
                        parse_strict='silent').physical_type == 'unknown'):
 
-                warnings.warn(f"Unknown value for {meta_property.upper()}.", SunpyUserWarning)
+                warn_user(f"Unknown value for {meta_property.upper()}.")
 
     def _validate_units(self, units, **kwargs):
         """
@@ -503,42 +832,14 @@ class GenericTimeSeries:
         specific validation should be handled in the relevant file in
         the "sunpy.timeseries.sources".
         """
-        warnings.simplefilter('always', Warning)
-
         result = True
         for key in units:
             if not isinstance(units[key], astropy.units.UnitBase):
                 # If this is not a unit then this can't be a valid units dict.
                 result = False
-                warnings.warn(f"Invalid unit given for {key}.", SunpyUserWarning)
+                warn_user(f"Invalid unit given for {key}.")
 
         return result
-
-    def _sanitize_units(self, **kwargs):
-        """
-        Sanitizes the `collections.OrderedDict` used to store the units.
-
-        Primarily this method will:
-
-        * Remove entries that don't match up to a column.
-        * Add unitless entries for columns with no units defined.
-        * Re-arrange the order of the dictionary to match the columns.
-        """
-        warnings.simplefilter('always', Warning)
-
-        # Populate unspecified units:
-        for column in set(self._data.columns.tolist()) - set(self.units.keys()):
-            # For all columns not present in the units dictionary.
-            self.units[column] = u.dimensionless_unscaled
-            warnings.warn(f"Unknown units for {column}.", SunpyUserWarning)
-
-        # Re-arrange so it's in the same order as the columns and removed unused.
-        units = OrderedDict()
-        for column in self._data.columns.tolist():
-            units.update({column: self.units[column]})
-
-        # Now use the amended units Ordered Dictionary
-        self.units = units
 
     def _sanitize_metadata(self, **kwargs):
         """
@@ -551,8 +852,6 @@ class GenericTimeSeries:
         * Remove column references in the metadata that don't match to a column in the data.
         * Remove metadata entries that have no columns matching the data.
         """
-        warnings.simplefilter('always', Warning)
-
         # Truncate the metadata
         self.meta._truncate(self.time_range)
 
@@ -590,13 +889,12 @@ class GenericTimeSeries:
 
     def to_dataframe(self, **kwargs):
         """
-        Return a `~pandas.core.frame.DataFrame` of the given
+        Return a `~pandas.DataFrame` of the given
         `~sunpy.timeseries.TimeSeries`.
 
         Returns
         -------
-        `~pandas.core.frame.DataFrame`
-            A `~pandas.core.frame.DataFrame` containing the data.
+        `~pandas.DataFrame`
         """
         return self._data
 
@@ -606,7 +904,7 @@ class GenericTimeSeries:
 
         Parameters
         ----------
-        kwargs : `dict`
+        **kwargs : `dict`
             All keyword arguments are passed to `pandas.DataFrame.to_numpy`.
 
         Returns
@@ -669,4 +967,4 @@ class GenericTimeSeries:
         filepath : `str`
             The path to the file you want to parse.
         """
-        return NotImplemented
+        raise NoMatchError(f'Could not find any timeseries sources to parse {filepath}')

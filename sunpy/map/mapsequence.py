@@ -1,19 +1,21 @@
 """A Python MapSequence Object"""
-#pylint: disable=W0401,W0614,W0201,W0212,W0404
 
+import html
+import textwrap
+import webbrowser
 from copy import deepcopy
+from tempfile import NamedTemporaryFile
 
-import numpy as np
 import matplotlib.animation
+import numpy as np
 import numpy.ma as ma
 
 import astropy.units as u
 
 from sunpy.map import GenericMap
-from sunpy.visualization.animator.mapsequenceanimator import MapSequenceAnimator
-from sunpy.visualization import wcsaxes_compat
-from sunpy.visualization import axis_labels_from_ctype
 from sunpy.util import expand_list
+from sunpy.util.exceptions import warn_user
+from sunpy.visualization import axis_labels_from_ctype, wcsaxes_compat
 
 __all__ = ['MapSequence']
 
@@ -35,13 +37,15 @@ class MapSequence:
     derotate : `bool`
         Apply a derotation to the data. Default to False.
 
-    To coalign a mapsequence so that solar features remain on the same pixels,
-    please see the "Coalignment of MapSequences" note below.
-
     Attributes
     ----------
     maps : `list`
         This attribute holds the list of Map instances obtained from parameter args.
+
+    Notes
+    -----
+    To coalign a mapsequence so that solar features remain on the same pixels,
+    please see the "Coalignment of MapSequences" note below.
 
     Examples
     --------
@@ -50,6 +54,7 @@ class MapSequence:
 
     MapSequences can be co-aligned using the routines in sunpy.image.coalignment.
     """
+
     def __init__(self, *args, sortby='date', derotate=False, **kwargs):
         """Creates a new Map instance"""
 
@@ -85,7 +90,155 @@ class MapSequence:
 
     def __repr__(self):
         names = set([m.__class__.__name__ for m in self.maps])
-        return f'MapSequence of {len(self.maps)} elements, with maps from {", ".join(names)}'
+        return (object.__repr__(self) + "\n" +
+                f'MapSequence of {len(self.maps)} elements, with maps from {", ".join(names)}')
+
+    def _repr_html_(self):
+        nmaps = len(self)
+
+        # Output a warning about rendering time if there are more than 9 Maps
+        if nmaps > 9:
+            warn_user(f"Rendering the summary for a MapSequence of {nmaps} Maps "
+                      "may take a while.")
+
+        # Assemble the individual HTML repr from each Map, all hidden initally
+        repr_list = [f"<div style='display: none' index={i}>{m._repr_html_()}</div>"
+                     for i, m in enumerate(self.maps)]
+
+        # Unhide the first Map
+        repr_list_html = "\n".join(repr_list).replace('display: none', 'display: ', 1)
+
+        # Return HTML with Javascript-powered buttons
+        # To avoid potential conflicts, the Javascript code does not use any user-defined functions
+        return textwrap.dedent(f"""\
+            <pre>{html.escape(self.__repr__())}</pre>
+            <form cur_index=0 max_index={nmaps - 1}>
+                <!-- Button to decrement index (always starts disabled) -->
+                <input type=button value='&larr;' style='font-weight: bold' disabled onClick='
+                    var form = this.parentElement;
+
+                    // Decrement index if allowed
+                    var cur_index = Math.max(
+                                        parseInt(form.getAttribute("cur_index")) - 1,
+                                        0
+                                    );
+                    form.setAttribute("cur_index", cur_index);
+
+                    // Enable the decrement button if and only if this is not the first Map
+                    form.children[0].disabled = (cur_index == 0);
+
+                    // Always enable the increment button (because we just decremented)
+                    form.children[1].disabled = false;
+
+                    // Update string (which is children[2] of the form)
+                    form.children[2].innerHTML = "Map at index " + cur_index;
+
+                    // Update visibilities to show only the current index
+                    // This avoids for...of syntax to retain support for ES5 browsers (e.g., IE11)
+                    var array = Array.prototype.slice.call(form.lastElementChild.children);
+                    array.forEach(function (elem)
+                        {{
+                            var form = elem.parentElement.parentElement;
+                            elem.style.display = (elem.getAttribute("index") ==
+                                                      form.getAttribute("cur_index") ? "" : "none"
+                                                 );
+                        }}
+                    );
+                '/>
+
+                <!-- Button to increment index (starts enabled if there is more than one Map) -->
+                <input type=button value='&rarr;' style='font-weight: bold'
+                    {"" if nmaps > 1 else "disabled"} onClick='
+
+                    var form = this.parentElement;
+
+                    // Increment index if allowed
+                    var cur_index = Math.min(
+                                        parseInt(form.getAttribute("cur_index")) + 1,
+                                        form.getAttribute("max_index")
+                                    );
+                    form.setAttribute("cur_index", cur_index);
+
+                    // Always enable the decrement button (because we just incremented)
+                    form.children[0].disabled = false;
+
+                    // Enable the increment button if and only if this is not the last Map
+                    form.children[1].disabled = (cur_index == form.getAttribute("max_index"));
+
+                    // Update string (which is children[2] of the form)
+                    form.children[2].innerHTML = "Map at index " + cur_index;
+
+                    // Update visibilities to show only the current index
+                    // This avoids for...of syntax to retain support for ES5 browsers (e.g., IE11)
+                    var array = Array.prototype.slice.call(form.lastElementChild.children);
+                    array.forEach(function (elem)
+                        {{
+                            var form = elem.parentElement.parentElement;
+                            elem.style.display = (elem.getAttribute("index") ==
+                                                      form.getAttribute("cur_index") ? "" : "none"
+                                                 );
+                        }}
+                    );
+
+                '/>
+
+                <!-- This string is updated as the index is changed -->
+                <span>Map at index 0</span>
+
+                <!-- This element is at the end so that lastElementChild will point to it -->
+                <div>
+                    {repr_list_html}
+                </div>
+            </form>""")
+
+    def quicklook(self):
+        """
+        Display a quicklook summary of the MapSequence instance using the default web browser.
+
+        Click on the |larr| and |rarr| buttons to step through the individual maps.
+
+        .. |larr|   unicode:: U+02190 .. LEFTWARDS ARROW
+        .. |rarr|   unicode:: U+02192 .. RIGHTWARDS ARROW
+
+        Notes
+        -----
+        The image colormap uses
+        `histogram equalization <https://en.wikipedia.org/wiki/Histogram_equalization>`__.
+
+        Interactive elements require Javascript support to be enabled in the web browser.
+
+        Examples
+        --------
+        >>> from sunpy.map import Map
+        >>> import sunpy.data.sample  # doctest: +REMOTE_DATA
+        >>> seq = Map(sunpy.data.sample.HMI_LOS_IMAGE,
+        ...           sunpy.data.sample.AIA_1600_IMAGE,
+        ...           sunpy.data.sample.EIT_195_IMAGE,
+        ...           sequence=True)  # doctest: +REMOTE_DATA
+        >>> seq.quicklook()  # doctest: +SKIP
+
+        (which will open the following content in the default web browser)
+
+        .. generate:: html
+            :html_border:
+
+            from sunpy.map import Map
+            import sunpy.data.sample
+            seq = Map(sunpy.data.sample.HMI_LOS_IMAGE,
+                      sunpy.data.sample.AIA_1600_IMAGE,
+                      sunpy.data.sample.EIT_195_IMAGE,
+                      sequence=True)
+            print(seq._repr_html_())
+
+        """
+        with NamedTemporaryFile('w', delete=False, prefix='sunpy.map.', suffix='.html') as f:
+            url = 'file://' + f.name
+            f.write(textwrap.dedent(f"""\
+                <html>
+                    <title>Quicklook summary for {html.escape(object.__repr__(self))}</title>
+                    <body>{self._repr_html_()}</body>
+                </html>"""))
+        webbrowser.open_new_tab(url)
 
     # Sorting methods
     @classmethod
@@ -104,25 +257,29 @@ class MapSequence:
 
         Parameters
         ----------
-        axes: mpl axes
+        axes : matplotlib.axes.Axes
             axes to plot the animation on, if none uses current axes
-
-        resample: list or False
+        resample : list
             Draws the map at a lower resolution to increase the speed of
             animation. Specify a list as a fraction i.e. [0.25, 0.25] to
             plot at 1/4 resolution.
             [Note: this will only work where the map arrays are the same size]
-
-        annotate: bool
+        annotate : bool
             Annotate the figure with scale and titles
-
-        interval: int
+        interval : int
             Animation interval in ms
-
         plot_function : function
-            A function to be called as each map is plotted. Any variables
-            returned from the function will have their ``remove()`` method called
-            at the start of the next frame so that they are removed from the plot.
+            A function to be called as each map is plotted.
+            For more information see `sunpy.visualization.animator.MapSequenceAnimator`.
+
+        Returns
+        -------
+        `matplotlib.animation.FuncAnimation`
+            A FuncAnimation instance.
+
+        See Also
+        --------
+        `sunpy.visualization.animator.MapSequenceAnimator`
 
         Examples
         --------
@@ -166,7 +323,7 @@ class MapSequence:
         fig = axes.get_figure()
 
         if not plot_function:
-            plot_function = lambda fig, ax, smap: []
+            def plot_function(fig, ax, smap): return []
         removes = []
 
         # Normal plot
@@ -193,9 +350,9 @@ class MapSequence:
                 removes.pop(0).remove()
 
             im.set_array(ani_data[i].data)
-            im.set_cmap(ani_data[i].plot_settings['cmap'])
+            im.set_cmap(kwargs.get('cmap', ani_data[i].plot_settings['cmap']))
 
-            norm = deepcopy(ani_data[i].plot_settings['norm'])
+            norm = deepcopy(kwargs.get('norm', ani_data[i].plot_settings['norm']))
             # The following explicit call is for bugged versions of Astropy's
             # ImageNormalize
             norm.autoscale_None(ani_data[i].data)
@@ -231,36 +388,30 @@ class MapSequence:
 
         Parameters
         ----------
-        fig: mpl.figure
+        fig : matplotlib.figure.Figure
             Figure to use to create the explorer
-
-        resample: list or False
+        resample : list
             Draws the map at a lower resolution to increase the speed of
             animation. Specify a list as a fraction i.e. [0.25, 0.25] to
             plot at 1/4 resolution.
             [Note: this will only work where the map arrays are the same size]
-
-        annotate: bool
+        annotate : bool
             Annotate the figure with scale and titles
-
-        interval: int
+        interval : int
             Animation interval in ms
-
-        colorbar: bool
+        colorbar : bool
             Plot colorbar
-
         plot_function : function
             A function to call to overplot extra items on the map plot.
-            For more information see `sunpy.visualization.MapSequenceAnimator`.
+            For more information see `sunpy.visualization.animator.MapSequenceAnimator`.
 
         Returns
         -------
-        mapsequenceanim : `sunpy.visualization.MapSequenceAnimator`
-            A mapsequence animator instance.
+        mapsequenceanim : `sunpy.visualization.animator.MapSequenceAnimator`
 
         See Also
         --------
-        sunpy.visualization.mapsequenceanimator.MapSequenceAnimator
+        sunpy.visualization.animator.MapSequenceAnimator
 
         Examples
         --------
@@ -292,6 +443,8 @@ class MapSequence:
         >>> ani = sequence.peek(resample=[0.5, 0.5], colorbar=True)   # doctest: +SKIP
         >>> mplani = ani.get_animation()   # doctest: +SKIP
         """
+        # Move the import for speed reasons
+        from sunpy.visualization.animator.mapsequenceanimator import MapSequenceAnimator  # noqa
 
         if resample:
             if self.all_maps_same_shape():
@@ -332,7 +485,8 @@ class MapSequence:
         If all the map shapes are not the same, a ValueError is thrown.
         """
         if self.all_maps_same_shape():
-            data = np.swapaxes(np.swapaxes(np.asarray([m.data for m in self.maps]), 0, 1).copy(), 1, 2).copy()
+            data = np.swapaxes(np.swapaxes(np.asarray(
+                [m.data for m in self.maps]), 0, 1).copy(), 1, 2).copy()
             if self.at_least_one_map_has_mask():
                 mask_sequence = np.zeros_like(data, dtype=bool)
                 for im, m in enumerate(self.maps):
@@ -349,3 +503,37 @@ class MapSequence:
         Return all the meta objects as a list.
         """
         return [m.meta for m in self.maps]
+
+    def save(self, filepath, filetype='auto', **kwargs):
+        """
+        Saves the sequence, with one file per map.
+
+        Currently SunPy can save files only in the FITS format.
+
+        Parameters
+        ----------
+        filepath : str
+            Location to save the file(s) to.  The string must contain ``"{index}"``,
+            which will be populated with the corresponding index number for each
+            map.  Format specifiers (e.g., ``"{index:03}"``) can be used.
+        filetype : str
+            'auto' or any supported file extension.
+        kwargs :
+            Any additional keyword arguments are passed to
+            `~sunpy.io.write_file`.
+
+        Examples
+        --------
+        >>> from sunpy.map import Map
+        >>> import sunpy.data.sample # doctest: +REMOTE_DATA
+        >>> smap = Map(sunpy.data.sample.HMI_LOS_IMAGE,
+        ...            sunpy.data.sample.AIA_1600_IMAGE,
+        ...            sequence=True)  # doctest: +REMOTE_DATA
+        >>> smap.save('map_{index:03}.fits')  # doctest: +SKIP
+
+        """
+        if filepath.format(index=0) == filepath:
+            raise ValueError("'{index}' must be appear in the string")
+
+        for index, map_seq in enumerate(self.maps):
+            map_seq.save(filepath.format(index=index), filetype, **kwargs)

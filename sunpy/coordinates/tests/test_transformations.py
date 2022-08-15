@@ -1,26 +1,42 @@
 import numpy as np
 import pytest
 
-import astropy
 import astropy.units as u
-from astropy.tests.helper import quantity_allclose, assert_quantity_allclose
 from astropy.constants import c as speed_of_light
-from astropy.coordinates import (SkyCoord, get_body_barycentric, Angle,
-                                 ConvertError, Longitude, CartesianRepresentation,
-                                 get_body_barycentric_posvel,
-                                 CartesianDifferential, SphericalDifferential,
-                                 HeliocentricMeanEcliptic)
+from astropy.coordinates import (
+    HCRS,
+    ICRS,
+    Angle,
+    CartesianDifferential,
+    CartesianRepresentation,
+    ConvertError,
+    HeliocentricMeanEcliptic,
+    Longitude,
+    SkyCoord,
+    SphericalDifferential,
+    get_body_barycentric,
+    get_body_barycentric_posvel,
+)
+from astropy.tests.helper import assert_quantity_allclose, quantity_allclose
 from astropy.time import Time
 
-from sunpy.coordinates import (Helioprojective, HeliographicStonyhurst,
-                               HeliographicCarrington, Heliocentric,
-                               HeliocentricEarthEcliptic, GeocentricSolarEcliptic,
-                               HeliocentricInertial, GeocentricEarthEquatorial,
-                               get_earth)
-from sunpy.coordinates import sun
+from sunpy.coordinates import (
+    GeocentricEarthEquatorial,
+    GeocentricSolarEcliptic,
+    Heliocentric,
+    HeliocentricEarthEcliptic,
+    HeliocentricInertial,
+    HeliographicCarrington,
+    HeliographicStonyhurst,
+    Helioprojective,
+    sun,
+)
+from sunpy.coordinates.ephemeris import get_body_heliographic_stonyhurst, get_earth
 from sunpy.coordinates.frames import _J2000
-from sunpy.coordinates.transformations import transform_with_sun_center
+from sunpy.coordinates.transformations import propagate_with_solar_surface, transform_with_sun_center
+from sunpy.physics.differential_rotation import diff_rot
 from sunpy.sun.constants import radius as _RSUN
+from sunpy.sun.constants import sidereal_rotation_rate
 from sunpy.time import parse_time
 
 
@@ -34,7 +50,7 @@ def test_hcc_to_hgs():
     lon = 20 * u.deg
     observer = HeliographicStonyhurst(lat=lat, lon=lon)
     hcc_in = Heliocentric(x=0*u.km, y=0*u.km, z=1*u.km, observer=observer)
-    hgs_out = hcc_in.transform_to(HeliographicStonyhurst)
+    hgs_out = hcc_in.transform_to(HeliographicStonyhurst())
 
     assert_quantity_allclose(hgs_out.lat, lat)
     assert_quantity_allclose(hgs_out.lon, lon)
@@ -154,6 +170,32 @@ def test_hgs_hcrs():
     assert quantity_allclose(earth_hme.lon, Angle('308d13m30.51s') - 180*u.deg, atol=5*u.arcsec)
     assert quantity_allclose(earth_hme.lat, -Angle('-0.27s'), atol=10*u.arcsec)
     assert quantity_allclose(earth_hme.distance, 0.9848139*u.AU, atol=5e-7*u.AU)
+
+
+def test_hcrs_hgs_different_obstime():
+    # Test whether the HCRS->HGS transformation handles a change in obstime the same way as forcing
+    # a HCRS loopback in Astropy
+    time1 = Time('2001-01-01')
+    time2 = Time('2001-02-01')
+
+    coord = HCRS(1*u.km, 2*u.km, 3*u.km, representation_type='cartesian', obstime=time1)
+    out_frame = HeliographicStonyhurst(obstime=time2)
+
+    sunpy_coord = coord.transform_to(out_frame)
+    astropy_coord = coord.transform_to(HCRS(obstime=time2)).transform_to(out_frame)
+
+    assert quantity_allclose(sunpy_coord.cartesian.xyz, astropy_coord.cartesian.xyz)
+
+
+def test_hcrs_hgs_reversibility():
+    # Test whether the HCRS->HGS transformation is reversed by the HGS->HCRS transformation
+    time1 = Time('2001-01-01')
+    time2 = Time('2001-02-01')
+
+    coord = HCRS(1*u.km, 2*u.km, 3*u.km, representation_type='cartesian', obstime=time1)
+    new_coord = coord.transform_to(HeliographicStonyhurst(obstime=time2)).transform_to(coord)
+
+    assert quantity_allclose(coord.cartesian.xyz, new_coord.cartesian.xyz)
 
 
 def test_hgs_hgc_roundtrip():
@@ -330,12 +372,12 @@ def test_hgc_hgc():
                                                                             obstime=obstime))
     new = old.transform_to(HeliographicCarrington(observer='earth', obstime=obstime + 1*u.day))
 
-    assert_quantity_allclose(new.lon, 75.815607 * u.deg, atol=1e-7*u.deg)  # solar rotation
+    assert_quantity_allclose(new.lon, 75.815592 * u.deg, atol=1e-7*u.deg)  # solar rotation
     # These are not equal to the old values, because the coordinates stay fixed
     # in inertial space, whilst the frame (fixed to the center of the Sun)
     # moves slightly.
-    assert_quantity_allclose(new.lat, 9.999963 * u.deg, atol=1e-7*u.deg)
-    assert_quantity_allclose(new.radius, 1.000009 * u.AU, atol=1e-7*u.AU)
+    assert_quantity_allclose(new.lat, 10.000037 * u.deg, atol=1e-7*u.deg)
+    assert_quantity_allclose(new.radius, 0.999991 * u.AU, atol=1e-7*u.AU)
 
 
 def test_hgc_hgc_different_observers():
@@ -352,10 +394,55 @@ def test_hgc_hgc_different_observers():
     sc_hgc_sun = sc_hgc_mars.transform_to(hgc_sun)
 
     ltt_earth = hgc_earth.observer.radius / speed_of_light
-    assert_quantity_allclose(sc_hgc_earth.lon - sc_hgc_sun.lon, ltt_earth * 14.1844*u.deg/u.day)
+    assert_quantity_allclose(sc_hgc_earth.lon - sc_hgc_sun.lon, ltt_earth * sidereal_rotation_rate)
 
     ltt_mars = hgc_mars.observer.radius / speed_of_light
-    assert_quantity_allclose(sc_hgc_mars.lon - sc_hgc_sun.lon, ltt_mars * 14.1844*u.deg/u.day)
+    assert_quantity_allclose(sc_hgc_mars.lon - sc_hgc_sun.lon, ltt_mars * sidereal_rotation_rate)
+
+
+def test_hgc_self_observer():
+    # Test specifying observer='self' for HGC
+    obstime = Time('2001-01-01')
+    hgc = HeliographicCarrington(10*u.deg, 20*u.deg, 3*u.AU, observer='self', obstime=obstime)
+
+    # Transform to HGS (i.e., observer='self' in the source frame)
+    hgs = hgc.transform_to(HeliographicStonyhurst(obstime=obstime))
+
+    # Manually calculate the post-transformation longitude
+    lon = sun.L0(obstime,
+                 light_travel_time_correction=False,
+                 nearest_point=False,
+                 aberration_correction=False)
+    lon += (hgc.radius - _RSUN) / speed_of_light * sidereal_rotation_rate
+
+    assert_quantity_allclose(Longitude(hgs.lon + lon), hgc.lon)
+    assert_quantity_allclose(hgs.lat, hgc.lat)
+    assert_quantity_allclose(hgs.radius, hgc.radius)
+
+    # Transform back to HGC (i.e., observer='self' in the destination frame)
+    hgc_loop = hgs.transform_to(hgc.replicate_without_data())
+
+    assert_quantity_allclose(hgc_loop.lon, hgc.lon)
+    assert_quantity_allclose(hgc_loop.lat, hgc.lat)
+    assert_quantity_allclose(hgc_loop.radius, hgc.radius)
+
+
+def test_hgc_loopback_self_observer():
+    # Test the HGC loopback where only one end has observer='self'
+    obstime = Time('2001-01-01')
+    coord = HeliographicCarrington(10*u.deg, 20*u.deg, 3*u.AU, observer='self', obstime=obstime)
+
+    new_observer = HeliographicStonyhurst(40*u.deg, 50*u.deg, 6*u.AU)
+    new_frame = HeliographicCarrington(observer=new_observer, obstime=obstime)
+
+    new_coord = coord.transform_to(new_frame)
+
+    # Manually calculate the longitude shift due to the difference in Sun-observer distance
+    lon = (6*u.AU - 3*u.AU) / speed_of_light * sidereal_rotation_rate
+
+    assert_quantity_allclose(new_coord.lon, coord.lon + lon)
+    assert_quantity_allclose(new_coord.lat, coord.lat)
+    assert_quantity_allclose(new_coord.radius, coord.radius)
 
 
 def test_hcc_hcc():
@@ -455,7 +542,7 @@ def test_hgs_hgc_sunspice():
     new = old.transform_to(HeliographicCarrington(observer='earth'))
 
     # Calculate the difference in longitude due to light travel time from the Sun to the Earth
-    delta_lon = (14.1844*u.deg/u.day) * (sun.earth_distance(old.obstime) - _RSUN) / speed_of_light
+    delta_lon = sidereal_rotation_rate * (sun.earth_distance(old.obstime) - _RSUN) / speed_of_light
 
     assert_quantity_allclose(new.lon, 16.688242*u.deg + delta_lon, atol=1e-2*u.arcsec, rtol=0)
     assert_quantity_allclose(new.lat, old.lat)
@@ -500,7 +587,6 @@ def test_hpc_hgs_implicit_hcc():
     assert_quantity_allclose(implicit.separation_3d(explicit2), 0*u.AU, atol=1e-10*u.AU)
 
 
-@pytest.mark.skipif(astropy.__version__ < '3.2.0', reason="Not supported by Astropy <3.2")
 def test_velocity_hcrs_hgs():
     # Obtain the position/velocity of Earth in ICRS
     obstime = Time(['2019-01-01', '2019-04-01', '2019-07-01', '2019-10-01'])
@@ -508,18 +594,14 @@ def test_velocity_hcrs_hgs():
     loc = pos.with_differentials(vel.represent_as(CartesianDifferential))
     earth = SkyCoord(loc, frame='icrs', obstime=obstime)
 
-    # The velocity of Earth in HGS should be very close to zero.  The velocity in the HGS Y
-    # direction is slightly further away from zero because there is true latitudinal motion.
+    # The velocity of Earth in HGS Y should be very close to zero because the XZ plane tracks
+    # the Earth.
     new = earth.heliographic_stonyhurst
-    assert_quantity_allclose(new.velocity.d_x, 0*u.km/u.s, atol=1e-15*u.km/u.s)
-    assert_quantity_allclose(new.velocity.d_y, 0*u.km/u.s, atol=1e-14*u.km/u.s)
-    assert_quantity_allclose(new.velocity.d_x, 0*u.km/u.s, atol=1e-15*u.km/u.s)
+    assert_quantity_allclose(new.velocity.d_y, 0*u.km/u.s, atol=1e-5*u.km/u.s)
 
     # Test the loopback to ICRS
     newer = new.icrs
-    assert_quantity_allclose(newer.velocity.d_x, vel.x)
-    assert_quantity_allclose(newer.velocity.d_y, vel.y)
-    assert_quantity_allclose(newer.velocity.d_z, vel.z)
+    assert_quantity_allclose(newer.velocity.d_xyz, vel.xyz)
 
 
 def test_velocity_hgs_hgc():
@@ -538,6 +620,42 @@ def test_velocity_hgs_hgc():
     assert_quantity_allclose(new_vel.d_lon, -360*u.deg / (27.27253*u.day), rtol=1e-2)
     assert_quantity_allclose(new_vel.d_lat, 0*u.deg/u.s)
     assert_quantity_allclose(new_vel.d_distance, 0*u.km/u.s, atol=1e-7*u.km/u.s)
+
+
+def test_velocity_hgs_hci():
+    # HGS and HCI share the same origin and Z axis, so the induced velocity is entirely angular
+    obstime = Time(['2021-01-01', '2021-04-01', '2021-07-01', '2021-10-01'])
+    venus_hgs = get_body_heliographic_stonyhurst('venus', obstime, include_velocity=True)
+    venus_hci = venus_hgs.transform_to(HeliocentricInertial(obstime=obstime))
+
+    # The induced velocity is the longitude component of Earth's velocity, ~360 deg/yr
+    induced_dlon = get_earth(obstime, include_velocity=True).heliocentricinertial.d_lon
+    assert_quantity_allclose(induced_dlon, 360*u.deg/u.yr, rtol=0.05)
+
+    # The HCI velocity should be the same as the HGS velocity except for the induced velocity
+    assert_quantity_allclose(venus_hci.d_distance, venus_hgs.d_radius, rtol=1e-5)
+    assert_quantity_allclose(venus_hci.d_lon, venus_hgs.d_lon + induced_dlon, rtol=1e-6)
+    assert_quantity_allclose(venus_hci.d_lat, venus_hgs.d_lat)
+
+
+def test_velocity_hcrs_hci():
+    # HCRS and HCI are both inertial frames with the same origin, so there is no induced velocity.
+    # There is an induced angular velocity for HCRS->HGS, which should be canceled out by the
+    # induced angular velocity for HGS->HCI.
+
+    # Define an HCRS coordinate with a purely radial velocity
+    sc_hcrs = SkyCoord(ra=[0, 90, 180, 270]*u.deg, pm_ra_cosdec=[0, 0, 0, 0]*u.deg/u.d,
+                       dec=[10, 20, 30, 40]*u.deg, pm_dec=[0, 0, 0, 0]*u.deg/u.d,
+                       distance=[5, 6, 7, 8]*u.AU, radial_velocity=[1, 2, 3, 4]*u.km/u.s,
+                       frame='hcrs', obstime='2021-01-01')
+
+    # Transform to HCI, and get the velocity vector in spherical coordinates
+    sc_hci = sc_hcrs.heliocentricinertial
+
+    # The HCI velocity should have the same amplitude, and should be purely radial
+    assert_quantity_allclose(sc_hci.d_distance, sc_hcrs.velocity.norm(), rtol=1e-6)
+    assert_quantity_allclose(sc_hci.d_lon, 0*u.arcsec/u.s, atol=1e-9*u.arcsec/u.s)
+    assert_quantity_allclose(sc_hci.d_lat, 0*u.arcsec/u.s, atol=1e-9*u.arcsec/u.s)
 
 
 def test_hme_hee_sunspice():
@@ -739,13 +857,25 @@ def test_array_obstime():
     assert isinstance(t2.frame, Helioprojective)
 
 
-_frameset1 = [HeliographicStonyhurst, HeliocentricInertial]
-_frameset2 = [HeliographicCarrington, Heliocentric, Helioprojective]
+_frames_wo_observer = [HeliographicStonyhurst, HeliocentricInertial,
+                       HeliocentricEarthEcliptic, GeocentricSolarEcliptic,
+                       GeocentricEarthEquatorial]
 
 
-@pytest.mark.parametrize("start_class", _frameset1 + _frameset2)
-@pytest.mark.parametrize("end_class", _frameset1)
-def test_no_obstime_on_one_end(start_class, end_class):
+@pytest.mark.parametrize("frame_class", _frames_wo_observer)
+def test_convert_error_with_no_obstime(frame_class):
+    # For most transformations, we do not allow `obstime` to be `None`
+    frame = frame_class(CartesianRepresentation(0, 0, 0)*u.km, obstime=None)
+
+    with pytest.raises(ConvertError, match=r".*obstime.*"):
+        ICRS(0*u.deg, 0*u.deg, 0*u.AU).transform_to(frame)
+
+    with pytest.raises(ConvertError, match=r".*obstime.*"):
+        frame.transform_to(ICRS())
+
+
+# Convenience function to check whether a transformation succeeds if the target `obstime` is `None`
+def assert_no_obstime_on_target_end(start_class, end_class):
     start_obstime = Time("2001-01-01")
 
     if hasattr(start_class, 'observer'):
@@ -754,8 +884,31 @@ def test_no_obstime_on_one_end(start_class, end_class):
     else:
         coord = start_class(CartesianRepresentation(0, 0, 0)*u.km, obstime=start_obstime)
 
-    result = coord.transform_to(end_class)
+    result = coord.transform_to(end_class(obstime=None))
     assert result.obstime == start_obstime
+
+
+# We currently allow the target `obstime` to be `None` for the transformation subgraph
+# below `HeliographicStonyhurst`, but this may change in the future
+_frameset1 = [HeliographicStonyhurst, HeliocentricInertial]
+_frameset2 = [HeliographicCarrington, Heliocentric, Helioprojective]
+
+
+@pytest.mark.parametrize("start_class", _frameset1 + _frameset2)
+@pytest.mark.parametrize("end_class", _frameset1)
+def test_no_obstime_on_target_end_hgs_subgraph(start_class, end_class):
+    assert_no_obstime_on_target_end(start_class, end_class)
+
+
+# We currently allow the target `obstime` to be `None` for the transformation subgraph
+# below `HeliocentricEarthEcliptic`, but this may change in the future
+_frameset3 = [HeliocentricEarthEcliptic, GeocentricSolarEcliptic]
+
+
+@pytest.mark.parametrize("start_class", _frameset3)
+@pytest.mark.parametrize("end_class", _frameset3)
+def test_no_obstime_on_target_end_hee_subgraph(start_class, end_class):
+    assert_no_obstime_on_target_end(start_class, end_class)
 
 
 def test_transform_with_sun_center():
@@ -782,7 +935,7 @@ def test_transform_with_sun_center():
 
 
 def test_transform_with_sun_center_reset():
-    # This test sequence ensures that the context manager resets propoerly
+    # This test sequence ensures that the context manager resets properly
 
     sun_center = SkyCoord(0*u.deg, 0*u.deg, 0*u.AU,
                           frame=HeliographicStonyhurst(obstime="2001-01-01"))
@@ -815,3 +968,50 @@ def test_transform_with_sun_center_reset():
     assert_quantity_allclose(result3.lon, result1.lon)
     assert_quantity_allclose(result3.lat, result1.lat)
     assert_quantity_allclose(result3.distance, result1.distance)
+
+
+def test_rsun_preservation():
+    # Check that rsun is preserved when transforming between any two frames with that attribute
+    args_in = {'obstime': '2001-01-01', 'rsun': 690*u.Mm}
+    args_out = {'obstime': '2001-02-01', 'rsun': 700*u.Mm}
+
+    coords_in = [Helioprojective(0*u.deg, 0*u.deg, 1*u.AU, observer='earth', **args_in),
+                 HeliographicStonyhurst(0*u.deg, 0*u.deg, 1*u.AU, **args_in),
+                 HeliographicCarrington(0*u.deg, 0*u.deg, 1*u.AU, observer='earth', **args_in)]
+
+    for coord in coords_in:
+        for frame in coords_in:
+            out_coord = coord.transform_to(frame.replicate(**args_out))
+            assert_quantity_allclose(out_coord.rsun, args_out['rsun'])
+
+
+def test_propagate_with_solar_surface():
+    # Test propagating the meridian by 6 days of solar rotation
+    meridian = SkyCoord(0*u.deg, np.arange(0, 90, 10)*u.deg, 1*u.AU,
+                        frame=HeliocentricInertial, obstime='2001-01-01')
+    dt = 6*u.day
+    end_frame = HeliocentricInertial(obstime=meridian.obstime + dt)
+
+    # Without the context manager
+    result1 = meridian.transform_to(end_frame)
+    assert u.allclose(result1.lon, 0*u.deg, atol=1e-1*u.deg)  # no rotation with the solar surface
+    assert not u.allclose(result1.lon, 0*u.deg, atol=1e-3*u.deg)  # some change due to translation
+    assert u.allclose(result1.lat, meridian.lat, atol=1e-2*u.deg)
+
+    # Using the context manager (also test default rotation model is 'howard')
+    with propagate_with_solar_surface():
+        result2 = meridian.transform_to(end_frame)
+    assert u.allclose(result2.lon, diff_rot(dt, meridian.lat, rot_type='howard'))
+
+    # Check that nesting the context manager doesn't confuse anything (also test other models)
+    with propagate_with_solar_surface('snodgrass'):
+        with propagate_with_solar_surface('allen'):
+            pass
+        result3 = meridian.transform_to(end_frame)  # should use 'snodgrass', not 'allen'
+    assert u.allclose(result3.lon, diff_rot(dt, meridian.lat, rot_type='snodgrass'))
+
+    # After the context manager, the coordinate should have the same result as the first transform
+    result4 = meridian.transform_to(end_frame)
+    assert_quantity_allclose(result4.lon, result1.lon)
+    assert_quantity_allclose(result4.lat, result1.lat)
+    assert_quantity_allclose(result4.distance, result1.distance)

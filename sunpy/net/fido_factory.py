@@ -4,32 +4,32 @@ This module provides the `Fido
 `sunpy.net.fido_factory.UnifiedDownloaderFactory` it also provides the
 `~sunpy.net.fido_factory.UnifiedResponse` class which
 `Fido.search <sunpy.net.fido_factory.UnifiedDownloaderFactory.search>` returns and the
-`~sunpy.net.fido_factory.DownloadResponse` class that is returned by
+`parfive.Results` class that is returned by
 `Fido.fetch <sunpy.net.fido_factory.UnifiedDownloaderFactory.fetch>`.
-
 """
 import os
 from pathlib import Path
+from textwrap import dedent
 from collections.abc import Sequence
 
-from parfive import Downloader, Results
+import numpy as np
+import parfive
 
-from sunpy.util.datatype_factory_base import BasicRegistrationFactory
-from sunpy.util.datatype_factory_base import NoMatchError
-from sunpy.util.datatype_factory_base import MultipleMatchError
+from astropy.table import Table
 
-from sunpy.net.base_client import BaseClient, BaseQueryResponse
-from sunpy.net import vso
-
-from sunpy.net import attr
-from sunpy.net import attrs as a
+from sunpy import config
+from sunpy.net import attr, vso
+from sunpy.net.base_client import BaseClient, QueryResponseColumn, QueryResponseRow, QueryResponseTable
+from sunpy.util.datatype_factory_base import BasicRegistrationFactory, NoMatchError
+from sunpy.util.parfive_helpers import Downloader, Results
+from sunpy.util.util import get_width
 
 __all__ = ['Fido', 'UnifiedResponse', 'UnifiedDownloaderFactory']
 
 
 class UnifiedResponse(Sequence):
     """
-    The object used to store results from `~sunpy.net.UnifiedDownloaderFactory.search`.
+    The object used to store results from `~sunpy.net.fido_factory.UnifiedDownloaderFactory.search`.
 
     The `~sunpy.net.Fido` object returns results from multiple different
     clients. So it is always possible to sub-select these results, you can
@@ -44,23 +44,41 @@ class UnifiedResponse(Sequence):
         """
         Parameters
         ----------
-        results : `sunpy.net.base_client.BaseQueryResponse`
+        *results : `sunpy.net.base_client.QueryResponseTable`
             One or more QueryResponse objects.
         """
         self._list = []
         self._numfile = 0
         for result in results:
-            if not isinstance(result, BaseQueryResponse):
-                raise TypeError(f"{type(result)} is not derived from sunpy.net.base_client.BaseQueryResponse")
+            if isinstance(result, QueryResponseRow):
+                result = result.as_table()
+
+            if isinstance(result, QueryResponseColumn):
+                result = result.as_table()
+
+            if not isinstance(result, QueryResponseTable):
+                raise TypeError(
+                    f"{type(result)} is not derived from sunpy.net.base_client.QueryResponseTable")
 
             self._list.append(result)
-            self._numfile = len(result)
+            self._numfile += len(result)
 
     def __len__(self):
         return len(self._list)
 
-    def __iter__(self):
-        return self.responses
+    def _getitem_string(self, aslice):
+        ret = []
+        for res in self._list:
+            clientname = res.client.__class__.__name__
+            if aslice.lower() == clientname.lower().split('client')[0]:
+                ret.append(res)
+
+        if len(ret) == 1:
+            ret = ret[0]
+        elif len(ret) == 0:
+            raise IndexError(f"{aslice} is not a valid key, valid keys are: {','.join(self.keys())}")
+
+        return ret
 
     def __getitem__(self, aslice):
         """
@@ -69,13 +87,12 @@ class UnifiedResponse(Sequence):
         The first index is to the client and the second index is the records
         returned from those clients.
         """
-        # Just a single int as a slice, we are just indexing client.
-        # Convert it to a slice so we still return a list.
-        if isinstance(aslice, int):
-            aslice = slice(aslice, aslice + 1)
-
-        if isinstance(aslice, slice):
+        if isinstance(aslice, (int, slice)):
             ret = self._list[aslice]
+
+        # using the client's name for indexing the responses.
+        elif isinstance(aslice, str):
+            ret = self._getitem_string(aslice)
 
         # Make sure we only have a length two slice.
         elif isinstance(aslice, tuple):
@@ -84,75 +101,61 @@ class UnifiedResponse(Sequence):
                                  "be sliced with one or two indices.")
 
             # Indexing both client and records, but only for one client.
-            if isinstance(aslice[0], int):
-                client_resp = self._list[aslice[0]]
-                ret = [client_resp[aslice[1]]]
-
-            # Indexing both client and records for multiple clients.
+            if isinstance(aslice[0], str):
+                intermediate = self._getitem_string(aslice[0])
             else:
                 intermediate = self._list[aslice[0]]
+
+            if isinstance(intermediate, list):
                 ret = []
                 for client_resp in intermediate:
                     ret.append(client_resp[aslice[1]])
+            else:
+                ret = intermediate[aslice[1]]
 
         else:
-            raise IndexError("UnifiedResponse objects must be sliced with integers.")
+            raise IndexError("UnifiedResponse objects must be sliced with integers or strings.")
+
+        if isinstance(ret, (QueryResponseTable, QueryResponseColumn, QueryResponseRow)):
+            return ret
 
         return UnifiedResponse(*ret)
 
-    def get_response(self, i):
+    def path_format_keys(self):
         """
-        Get the actual response rather than another UnifiedResponse object.
-        """
-        return self._list[i]
+        Returns all the names that can be used to format filenames.
 
-    def response_block_properties(self):
-        """
-        A set of class attributes on all the response blocks.
+        Only the keys which can be used to format all results from all
+        responses contained in this `~.UnifiedResponse` are returned. Each
+        individual response might have more keys available.
 
-        Returns
-        -------
-        s : list
-            List of strings, containing attribute names in the response blocks.
+        Each one corresponds to a single column in the table, and the format
+        syntax should match the dtype of that column, i.e. for a ``Time``
+        object or a ``Quantity``.
         """
-        s = self.get_response(0).response_block_properties()
-        for i in range(1, len(self)):
-            s.intersection(self.get_response(i).response_block_properties())
+        s = self[0].path_format_keys()
+        for table in self[1:]:
+            s = s.intersection(table.path_format_keys())
         return s
 
-    @property
-    def tables(self):
+    def keys(self):
         """
-        Returns a list of `astropy.table.Table` for all responses present in a specific
-        `~sunpy.net.fido_factory.UnifiedResponse` object. They can then be used
-        to perform key-based indexing of objects of either type
-        `sunpy.net.dataretriever.client.QueryResponse`, `sunpy.net.vso.QueryResponse` or
-        `sunpy.net.jsoc.JSOCClient`
+        Names of the contained responses.
 
-        Returns
-        -------
-        `list`
-            A list of `astropy.table.Table`, consisting of data either from the
-            `sunpy.net.dataretriever.client.QueryResponse`, `sunpy.net.vso.QueryResponse` or
-            `sunpy.net.jsoc.JSOCClient`.
+        One name may map to more than one response.
         """
-        tables = []
-        for block in self.responses:
-            tables.append(block.build_table())
-        return tables
-
-    @property
-    def responses(self):
-        """
-        A generator of all the `sunpy.net.dataretriever.client.QueryResponse`
-        objects contained in the `~sunpy.net.fido_factory.UnifiedResponse`
-        object.
-        """
-        for i in range(len(self)):
-            yield self.get_response(i)
+        ret = []
+        for res in self._list:
+            clientname = res.client.__class__.__name__.lower().split('client')[0]
+            if clientname not in ret:
+                ret.append(clientname)
+        return ret
 
     @property
     def file_num(self):
+        """
+        The number of records returned in all responses.
+        """
         return self._numfile
 
     def _repr_html_(self):
@@ -161,7 +164,7 @@ class UnifiedResponse(Sequence):
             ret = 'Results from {} Provider:</br></br>'.format(len(self))
         else:
             ret = 'Results from {} Providers:</br></br>'.format(len(self))
-        for block in self.responses:
+        for block in self:
             ret += "{} Results from the {}:</br>".format(len(block),
                                                          block.client.__class__.__name__)
             ret += block._repr_html_()
@@ -178,13 +181,47 @@ class UnifiedResponse(Sequence):
             ret = 'Results from {} Provider:\n\n'.format(len(self))
         else:
             ret = 'Results from {} Providers:\n\n'.format(len(self))
-        for block in self.responses:
-            ret += "{} Results from the {}:\n".format(len(block), block.client.__class__.__name__)
+        for block in self:
+            ret += f"{len(block)} Results from the {block.client.__class__.__name__}:\n"
+            if block.client.info_url is not None:
+                ret += f'Source: {block.client.info_url}\n'
+            size = block.total_size()
+            if np.isfinite(size):
+                ret += f'Total estimated size: {size}\n'
+            ret += '\n'
             lines = repr(block).split('\n')
             ret += '\n'.join(lines[1:])
             ret += '\n\n'
 
         return ret
+
+    def show(self, *cols):
+        """
+        Displays response tables with desired columns for the Query.
+
+        Parameters
+        ----------
+        \\*cols : `tuple`
+            Name of columns to be shown.
+
+        Returns
+        -------
+        `list` of `astropy.table.Table`
+            A list of tables showing values for specified columns.
+        """
+        return type(self)(*[i.show(*cols) for i in self._list])
+
+    @property
+    def all_colnames(self):
+        """
+        Returns all the colnames in any of the tables in this response.
+
+        Any column names in this list are valid inputs to :meth:`.UnifiedResponse.show`.
+        """
+        colnames = set(self[0].colnames)
+        for resp in self[1:]:
+            colnames.union(resp.colnames)
+        return sorted(list(colnames))
 
 
 query_walker = attr.AttrWalker()
@@ -215,9 +252,14 @@ def _create_or(walker, query, factory):
 
 class UnifiedDownloaderFactory(BasicRegistrationFactory):
     """
-    sunpy.net.Fido(\\*args, \\*\\*kwargs)
+    Fido is a unified data search and retrieval tool.
 
-    Search and Download data from a variety of supported sources.
+    It provides simultaneous access to a variety of online data sources, some
+    cover multiple instruments and data products like the Virtual Solar
+    Observatory and some are specific to a single source.
+
+    For details of using `~sunpy.net.Fido` see :ref:`fido_guide`.
+
     """
 
     def search(self, *query):
@@ -230,25 +272,25 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
 
         >>> from sunpy.net import Fido, attrs as a
         >>> import astropy.units as u
-        >>> unifresp = Fido.search(a.Time('2012/3/4', '2012/3/6'), a.Instrument('lyra')) # doctest: +REMOTE_DATA
+        >>> unifresp = Fido.search(a.Time('2012/3/4', '2012/3/6'), a.Instrument.lyra) # doctest: +REMOTE_DATA
 
         Query for data from Nobeyama Radioheliograph and RHESSI
 
         >>> unifresp = Fido.search(a.Time('2012/3/4', '2012/3/6'),
-        ...     (a.Instrument('norh') & a.Wavelength(17*u.GHz)) | a.Instrument('rhessi'))  # doctest: +REMOTE_DATA
+        ...     (a.Instrument.norh & a.Wavelength(17*u.GHz)) | a.Instrument.rhessi)  # doctest: +REMOTE_DATA
 
         Query for 304 Angstrom SDO AIA data with a cadence of 10 minutes
 
         >>> import astropy.units as u
         >>> from sunpy.net import Fido, attrs as a
         >>> unifresp = Fido.search(a.Time('2012/3/4', '2012/3/6'),
-        ...                        a.Instrument('AIA'),
+        ...                        a.Instrument.aia,
         ...                        a.Wavelength(304*u.angstrom, 304*u.angstrom),
         ...                        a.Sample(10*u.minute))  # doctest: +REMOTE_DATA
 
         Parameters
         ----------
-        query : `sunpy.net.vso.attrs`, `sunpy.net.jsoc.attrs`
+        *query : `sunpy.net.vso.attrs`, `sunpy.net.jsoc.attrs`
             A query consisting of multiple parameters which define the
             requested data.  The query is specified using attributes from the
             VSO and the JSOC.  The query can mix attributes from the VSO and
@@ -265,7 +307,7 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
         ie. query is now of form A & B or ((A & B) | (C & D))
         This helps in modularising query into parts and handling each of the
         parts individually.
-        """  # noqa
+        """
         query = attr.and_(*query)
         import pdb; pdb.set_trace()
         results = query_walker.create(query, self)
@@ -274,45 +316,36 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
         # client generated results, we drop the empty VSO results for tidiness.
         # This is because the VSO _can_handle_query is very broad because we
         # don't know the full list of supported values we can search for (yet).
-        if len(results) > 1:
-            vso_results = list(filter(lambda r: isinstance(r, vso.QueryResponse), results))
-            for vres in vso_results:
-                if len(vres) == 0:
-                    results.remove(vres)
+        results = [r for r in results if not isinstance(r, vso.VSOQueryResponseTable) or len(r) > 0]
 
         return UnifiedResponse(*results)
 
     def fetch(self, *query_results, path=None, max_conn=5, progress=True,
               overwrite=False, downloader=None, **kwargs):
         """
-        Download the records represented by
+        Download the records represented by `~sunpy.net.base_client.QueryResponseTable` or
         `~sunpy.net.fido_factory.UnifiedResponse` objects.
 
         Parameters
         ----------
-        query_results : `sunpy.net.fido_factory.UnifiedResponse`
+        *query_results : `sunpy.net.fido_factory.UnifiedResponse` or `~sunpy.net.base_client.QueryResponseTable`
             Container returned by query method, or multiple.
-
         path : `str`
             The directory to retrieve the files into. Can refer to any fields
-            in `UnifiedResponse.response_block_properties` via string formatting,
+            in `~sunpy.net.base_client.BaseQueryResponse.response_block_properties` via string formatting,
             moreover the file-name of the file downloaded can be referred to as file,
             e.g. "{source}/{instrument}/{time.start}/{file}".
-
         max_conn : `int`, optional
             The number of parallel download slots.
-
         progress : `bool`, optional
             If `True` show a progress bar showing how many of the total files
             have been downloaded. If `False`, no progress bars will be shown at all.
-
         overwrite : `bool` or `str`, optional
             Determine how to handle downloading if a file already exists with the
             same name. If `False` the file download will be skipped and the path
             returned to the existing file, if `True` the file will be downloaded
-            and the existing file will be overwritten, if `'unique'` the filename
+            and the existing file will be overwritten, if ``'unique'`` the filename
             will be modified to be unique.
-
         downloader : `parfive.Downloader`, optional
             The download manager to use. If specified the ``max_conn``,
             ``progress`` and ``overwrite`` arguments are ignored.
@@ -332,19 +365,40 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
         >>> filepaths = Fido.fetch(filepaths)  # doctest: +SKIP
 
         """
-        if path is not None:
-            exists = list(filter(lambda p: p.exists(), Path(path).parents))
-            if not os.access(exists[0], os.W_OK):
-                raise PermissionError('You do not have permission to write'
-                                      f' to the directory {exists[0]}.')
+        if path is None:
+            path = Path(config.get('downloads', 'download_dir')) / '{file}'
+        elif isinstance(path, (str, os.PathLike)) and '{file}' not in str(path):
+            path = Path(path) / '{file}'
+        else:
+            path = Path(path)
+        path = path.expanduser()
+
+        # Ensure we have write permissions to the path
+        exists = list(filter(lambda p: p.exists(), Path(path).resolve().parents))
+        if not os.access(exists[0], os.W_OK):
+            raise PermissionError('You do not have permission to write'
+                                  f' to the directory {exists[0]}.')
 
         if "wait" in kwargs:
             raise ValueError("wait is not a valid keyword argument to Fido.fetch.")
 
+        # TODO: Remove when parfive allows us to special case URLS.
+        # Avoid more than one connection for JSOC only requests.
+        from sunpy.net.jsoc import JSOCClient
+
+        is_jsoc_only = False
+        for query_result in query_results:
+            if isinstance(query_result, UnifiedResponse):
+                is_jsoc_only = all([isinstance(result.client, JSOCClient) for result in query_result])
+            elif isinstance(query_result, QueryResponseTable):
+                is_jsoc_only = all([isinstance(result.table.client, JSOCClient) for result in query_result])
         if downloader is None:
+            if is_jsoc_only:
+                max_conn = 1
+                kwargs['max_splits'] = 1
             downloader = Downloader(max_conn=max_conn, progress=progress, overwrite=overwrite)
-        elif not isinstance(downloader, Downloader):
-            raise TypeError("The downloader argument must be a parfive.Downloader object.")
+        elif not isinstance(downloader, parfive.Downloader):
+            raise TypeError("The downloader argument must be a parfive.Downloader instance.")
 
         # Handle retrying failed downloads
         retries = [isinstance(arg, Results) for arg in query_results]
@@ -356,22 +410,30 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
                 results._errors += dr._errors
             return results
         elif any(retries):
-            raise TypeError("If any arguments to fetch are "
-                            "`parfive.Results` objects, all arguments must be.")
+            raise TypeError("If any arguments to fetch are `parfive.Results` objects, all arguments must be.")
 
         reslist = []
         for query_result in query_results:
-            for block in query_result.responses:
-                reslist.append(block.client.fetch(block, path=path,
-                                                  downloader=downloader,
-                                                  wait=False, **kwargs))
+            if isinstance(query_result, QueryResponseRow):
+                responses = [query_result.as_table()]
+            elif isinstance(query_result, QueryResponseTable):
+                responses = [query_result]
+            elif isinstance(query_result, UnifiedResponse):
+                responses = query_result
+            else:
+                raise ValueError(f"Query result has an unrecognized type: {type(query_result)} "
+                                 "Allowed types are QueryResponseRow, QueryResponseTable or UnifiedResponse.")
+            for block in responses:
+                result = block.client.fetch(block, path=path,
+                                            downloader=downloader,
+                                            wait=False, **kwargs)
+                if result not in (NotImplemented, None):
+                    reslist.append(result)
 
         results = downloader.download()
         # Combine the results objects from all the clients into one Results
         # object.
         for result in reslist:
-            if result is None:
-                continue
             if not isinstance(result, Results):
                 raise TypeError(
                     "If wait is False a client must return a parfive.Downloader and either None"
@@ -404,12 +466,11 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
 
         Parameters
         ----------
-        query : collection of `~sunpy.net.vso.attr` objects
+        *query : collection of `~sunpy.net.vso.attr` objects
 
         Returns
         -------
         results : `list`
-
         client : `object`
             Instance of client class
         """
@@ -417,11 +478,44 @@ class UnifiedDownloaderFactory(BasicRegistrationFactory):
         results = []
         for client in candidate_widget_types:
             tmpclient = client()
-            results.append(tmpclient.search(*query))
+            kwargs = dict()
+            # Handle the change in response format in the VSO
+            if isinstance(tmpclient, vso.VSOClient):
+                kwargs = dict(response_format="table")
+            results.append(tmpclient.search(*query, **kwargs))
 
         # This method is called by `search` and the results are fed into a
         # UnifiedResponse object.
         return results
+
+    def __repr__(self):
+        return object.__repr__(self) + "\n" + self._print_clients()
+
+    def __str__(self):
+        """
+        This enables the "pretty" printing of the Fido Clients.
+        """
+        return self._print_clients()
+
+    def _repr_html_(self):
+        """
+        This enables the "pretty" printing of the Fido Clients with html.
+        """
+        return self._print_clients(html=True)
+
+    def _print_clients(self, html=False, visible_entries=-1):
+        width = -1 if html else get_width()
+
+        t = Table(names=["Client", "Description"], dtype=["U80", "U120"])
+        lines = ["sunpy.net.Fido", dedent(self.__doc__)]
+        if html:
+            lines = [f"<p>{line}</p>" for line in lines]
+        for key in BaseClient._registry.keys():
+            t.add_row((key.__name__, dedent(
+                key.__doc__.partition("\n\n")[0].replace("\n    ", " "))))
+        lines.extend(t.pformat_all(max_lines=visible_entries,
+                                   show_dtype=False, max_width=width, align="<", html=html))
+        return '\n'.join(lines)
 
 
 Fido = UnifiedDownloaderFactory(

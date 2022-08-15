@@ -1,23 +1,94 @@
 """
 This module provies a RHESSI `~sunpy.timeseries.TimeSeries` source.
 """
-import datetime
+import itertools
 from collections import OrderedDict
 
-import matplotlib.dates
-import matplotlib as mpl
-import matplotlib.pyplot as plt
+import numpy as np
 from pandas import DataFrame
 
 import astropy.units as u
+from astropy.time import TimeDelta
 
 import sunpy.io
-from sunpy.instr import rhessi
+from sunpy.time import parse_time
 from sunpy.timeseries.timeseriesbase import GenericTimeSeries
 from sunpy.util.metadata import MetaDict
-from sunpy.visualization import peek_show
 
 __all__ = ['RHESSISummaryTimeSeries']
+
+
+def uncompress_countrate(compressed_countrate):
+    """
+    Convert the compressed count rate inside of observing summary file from a
+    compressed byte to a true count rate.
+
+    Parameters
+    ----------
+    compressed_countrate : `byte` array
+        A compressed count rate returned from an observing summary file.
+
+    References
+    ----------
+    `Hsi_obs_summ_decompress.pro <https://hesperia.gsfc.nasa.gov/ssw/hessi/idl/qlook_archive/hsi_obs_summ_decompress.pro>`_
+    """
+
+    # Ensure uncompressed counts are between 0 and 255
+    if (compressed_countrate.min() < 0) or (compressed_countrate.max() > 255):
+        raise ValueError(
+            f'Exepected uncompressed counts {compressed_countrate} to in range 0-255')
+
+    # TODO Must be a better way than creating entire lookup table on each call
+    ll = np.arange(0, 16, 1)
+    lkup = np.zeros(256, dtype='int')
+    _sum = 0
+    for i in range(0, 16):
+        lkup[16 * i:16 * (i + 1)] = ll * 2 ** i + _sum
+        if i < 15:
+            _sum = lkup[16 * (i + 1) - 1] + 2 ** i
+
+    return lkup[compressed_countrate]
+
+
+def parse_observing_summary_hdulist(hdulist):
+    """
+    Parse a RHESSI observation summary file.
+
+    Parameters
+    ----------
+    hdulist : `list`
+        The HDU list from the fits file.
+
+    Returns
+    -------
+    out : `dict`
+        Returns a dictionary.
+    """
+    header = hdulist[0].header
+
+    reference_time_ut = parse_time(hdulist[5].data.field('UT_REF')[0],
+                                   format='utime')
+    time_interval_sec = hdulist[5].data.field('TIME_INTV')[0]
+    # label_unit = fits[5].data.field('DIM1_UNIT')[0]
+    # labels = fits[5].data.field('DIM1_IDS')
+    labels = ['3 - 6 keV', '6 - 12 keV', '12 - 25 keV', '25 - 50 keV',
+              '50 - 100 keV', '100 - 300 keV', '300 - 800 keV',
+              '800 - 7000 keV', '7000 - 20000 keV']
+
+    # The data stored in the fits file are "compressed" countrates stored as
+    # one byte
+    compressed_countrate = np.array(hdulist[6].data.field('countrate'))
+
+    countrate = uncompress_countrate(compressed_countrate)
+    dim = np.array(countrate[:, 0]).size
+
+    time_array = parse_time(reference_time_ut) + \
+        TimeDelta(time_interval_sec * np.arange(dim) * u.second)
+
+    #  TODO generate the labels for the dict automatically from labels
+    data = {'time': time_array, 'data': countrate, 'labels': labels}
+
+    return header, data
 
 
 class RHESSISummaryTimeSeries(GenericTimeSeries):
@@ -58,57 +129,50 @@ class RHESSISummaryTimeSeries(GenericTimeSeries):
     * `Mission Paper. <https://doi.org/10.1023/A:1022428818870>`_
     """
 
-    # Class attribute used to specify the source class of the TimeSeries.
+    # Class attributes used to specify the source class of the TimeSeries
+    # and a URL to the mission website.
     _source = 'rhessi'
+    _url = "https://hesperia.gsfc.nasa.gov/rhessi3/index.html"
 
-    @peek_show
-    def peek(self, title="RHESSI Observing Summary Count Rate", **kwargs):
+    _peek_title = "RHESSI Observing Summary Count Rate"
+
+    def plot(self, axes=None, columns=None, **kwargs):
         """
-        Plots RHESSI Count Rate light curve. An example is shown below:
-
-        .. plot::
-
-            import sunpy.data.sample
-            import sunpy.timeseries
-            rhessi = sunpy.timeseries.TimeSeries(sunpy.data.sample.RHESSI_TIMESERIES, source='RHESSI')
-            rhessi.peek()
+        Plots RHESSI count rate light curve.
 
         Parameters
         ----------
-        title : `str`
-            The title of the plot.
+        axes : `matplotlib.axes.Axes`, optional
+            The axes on which to plot the TimeSeries. Defaults to current axes.
+        columns : list[str], optional
+            If provided, only plot the specified columns.
         **kwargs : `dict`
-            Additional plot keyword arguments that are handed to `axes.plot` functions
+            Additional plot keyword arguments that are handed to `~matplotlib.axes.Axes.plot`
+            functions.
+
+        Returns
+        -------
+        `~matplotlib.axes.Axes`
+            The plot axes.
         """
-        # Check we have a timeseries valid for plotting
-        self._validate_data_for_plotting()
+        axes, columns = self._setup_axes_columns(axes, columns)
 
-        figure = plt.figure()
-        axes = plt.gca()
-
-        lc_linecolors = rhessi.hsi_linecolors()
-
-        for lc_color, (item, frame) in zip(lc_linecolors, self.to_dataframe().items()):
-            axes.plot_date(self.to_dataframe().index, frame.values, '-', label=item, lw=2, color=lc_color, **kwargs)
-
+        # These are a matplotlib version of the default RHESSI color cycle
+        default_colors = ('black', 'tab:pink', 'tab:green', 'tab:cyan',
+                          'tab:olive', 'tab:red', 'tab:blue', 'tab:orange',
+                          'tab:brown')
+        colors = kwargs.pop('colors', default_colors)
+        for color, (item, frame) in zip(itertools.cycle(colors),
+                                        self._data[columns].items()):
+            axes.plot(self.to_dataframe()[columns].index, frame.values,
+                      color=color, label=item, **kwargs)
         axes.set_yscale("log")
-        axes.set_xlabel(datetime.datetime.isoformat(self.to_dataframe().index[0])[0:10])
-
-        axes.set_title(title)
         axes.set_ylabel('Count Rate s$^{-1}$ detector$^{-1}$')
-
         axes.yaxis.grid(True, 'major')
         axes.xaxis.grid(False, 'major')
         axes.legend()
-
-        # TODO: display better tick labels for date range (e.g. 06/01 - 06/05)
-        formatter = matplotlib.dates.DateFormatter('%H:%M')
-        axes.xaxis.set_major_formatter(formatter)
-
-        axes.fmt_xdata = matplotlib.dates.DateFormatter('%H:%M')
-        figure.autofmt_xdate()
-
-        return figure
+        self._setup_x_axis(axes)
+        return axes
 
     @classmethod
     def _parse_file(cls, filepath):
@@ -133,7 +197,7 @@ class RHESSISummaryTimeSeries(GenericTimeSeries):
         hdulist : `astropy.io.fits.HDUList`
             A HDU list.
         """
-        header, d = rhessi.parse_observing_summary_hdulist(hdulist)
+        header, d = parse_observing_summary_hdulist(hdulist)
         # The time of dict `d` is astropy.time, but dataframe can only take datetime
         d['time'] = d['time'].datetime
         header = MetaDict(OrderedDict(header))

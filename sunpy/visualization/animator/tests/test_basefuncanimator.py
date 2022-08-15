@@ -1,24 +1,18 @@
-import warnings
 from functools import partial
-from itertools import product
 
 import matplotlib.animation as mplanim
 import matplotlib.axes as maxes
 import matplotlib.backend_bases as mback
+import matplotlib.figure as mfigure
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from mpl_animators import base
 
-import astropy.units as u
-import astropy.wcs
-
-import sunpy.data.test
-import sunpy.map
 from sunpy.tests.helpers import figure_test
-from sunpy.time import parse_time
-from sunpy.visualization.animator import (ArrayAnimator, BaseFuncAnimator,
-                                          ImageAnimatorWCS, LineAnimator, base)
-from sunpy.util.exceptions import SunpyDeprecationWarning
+from sunpy.visualization.animator import ArrayAnimator, BaseFuncAnimator, LineAnimator
+
+pytestmark = pytest.mark.filterwarnings("ignore::sunpy.util.exceptions.SunpyDeprecationWarning")
 
 
 class FuncAnimatorTest(BaseFuncAnimator):
@@ -38,8 +32,9 @@ def button_func1(*args, **kwargs):
     print(*args, **kwargs)
 
 
-@pytest.mark.parametrize('fig, colorbar, buttons', ((None, False, [[], []]),
-                                                    (plt.figure(), True, [[button_func1], ["hi"]])))
+@pytest.mark.parametrize('fig, colorbar, buttons',
+                         ((None, False, [[], []]),
+                          (mfigure.Figure(), True, [[button_func1], ["hi"]])))
 def test_base_func_init(fig, colorbar, buttons):
     data = np.random.random((3, 10, 10))
     func0 = partial(update_plotval, data=data)
@@ -57,7 +52,7 @@ def test_base_func_init(fig, colorbar, buttons):
     tfa._set_active_slider(1)
     assert tfa.active_slider == 1
 
-    fig = plt.figure()
+    fig = tfa.fig
     event = mback.KeyEvent(name='key_press_event', canvas=fig.canvas, key='down')
     tfa._key_press(event)
     assert tfa.active_slider == 0
@@ -105,14 +100,17 @@ def test_base_func_init(fig, colorbar, buttons):
     tfa._mouse_click(event)
     assert tfa.active_slider == 0
 
-@pytest.fixture
-def funcanimator():
+
+# Make sure figures created directly and through pyplot work
+@pytest.fixture(params=[plt.figure, mfigure.Figure])
+def funcanimator(request):
     data = np.random.random((3, 10, 10))
     func = partial(update_plotval, data=data)
     funcs = [func]
     ranges = [(0, 3)]
+    fig = request.param()
 
-    return FuncAnimatorTest(data, funcs, ranges)
+    return FuncAnimatorTest(data, funcs, ranges, fig=fig)
 
 
 def test_to_anim(funcanimator):
@@ -121,8 +119,24 @@ def test_to_anim(funcanimator):
 
 
 def test_to_axes(funcanimator):
-    ax = funcanimator._get_main_axes()
-    assert isinstance(ax, maxes._subplots.SubplotBase)
+    assert isinstance(funcanimator.axes, maxes.SubplotBase)
+
+
+def test_axes_set():
+    data = np.random.random((3, 10, 10))
+    funcs = [partial(update_plotval, data=data)]
+    ranges = [(0, 3)]
+
+    # Create Figure for animator
+    fig1 = plt.figure()
+    # Create new Figure, Axes, and set current axes
+    fig2, ax = plt.subplots()
+    plt.sca(ax)
+    ani = FuncAnimatorTest(data, funcs, ranges, fig=fig1)
+    # Make sure the animator axes is now the current axes
+    assert plt.gca() is ani.axes
+
+    [plt.close(f) for f in [fig1, fig2]]
 
 
 def test_edges_to_centers_nd():
@@ -153,16 +167,16 @@ axis_ranges1 = np.tile(np.linspace(0, 100, 21), (10, 1))
 
 @pytest.mark.parametrize('axis_ranges, exp_extent, exp_axis_ranges',
                          [([None, None], [-0.5, 19.5],
-                          [np.arange(10), np.array([-0.5, 19.5])]),
+                           [np.arange(10), np.array([-0.5, 19.5])]),
 
                           ([[0, 10], [0, 20]], [0, 20],
-                          [np.arange(0.5, 10.5), np.asarray([0, 20])]),
+                           [np.arange(0.5, 10.5), np.asarray([0, 20])]),
 
                           ([np.arange(0, 11), np.arange(0, 21)], [0, 20],
-                          [np.arange(0.5, 10.5), np.arange(0.5, 20.5)]),
+                           [np.arange(0.5, 10.5), np.arange(0.5, 20.5)]),
 
                           ([None, axis_ranges1], [0.0, 100.0],
-                          [np.arange(10), base.edges_to_centers_nd(axis_ranges1, 1)])])
+                           [np.arange(10), base.edges_to_centers_nd(axis_ranges1, 1)])])
 def test_sanitize_axis_ranges(axis_ranges, exp_extent, exp_axis_ranges):
     data_shape = (10, 20)
     data = np.random.rand(*data_shape)
@@ -174,16 +188,28 @@ def test_sanitize_axis_ranges(axis_ranges, exp_extent, exp_axis_ranges):
     assert callable(out_axis_ranges[0])
     assert np.array_equal(exp_axis_ranges[0], out_axis_ranges[0](np.arange(10)))
 
-xdata = np.tile(np.linspace(0, 100, 11), (5, 5, 1))
+
+XDATA = np.tile(np.linspace(0, 100, 11), (5, 5, 1))
 
 
 @pytest.mark.parametrize('plot_axis_index, axis_ranges, xlabel, xlim',
                          [(-1, None, None, None),
-                          (-1, [None, None, xdata], 'x-axis', None)])
+                          (-1, [None, None, XDATA], 'x-axis', None)])
 def test_lineanimator_init(plot_axis_index, axis_ranges, xlabel, xlim):
     data = np.random.random((5, 5, 10))
     LineAnimator(data=data, plot_axis_index=plot_axis_index, axis_ranges=axis_ranges,
                  xlabel=xlabel, xlim=xlim)
+
+
+def test_lineanimator_init_nans():
+    data = np.random.random((5, 5, 10))
+    data[0][0][:] = np.nan
+    line_anim = LineAnimator(data=data, plot_axis_index=-1, axis_ranges=[None, None, XDATA],
+                             xlabel='x-axis', xlim=None, ylim=None)
+    assert line_anim.ylim[0] is not None
+    assert line_anim.ylim[1] is not None
+    assert line_anim.xlim[0] is not None
+    assert line_anim.xlim[1] is not None
 
 
 @figure_test
@@ -193,27 +219,7 @@ def test_lineanimator_figure():
     data0 = np.random.rand(*data_shape0)
     plot_axis0 = 1
     slider_axis0 = 0
-    xdata = np.tile(np.linspace(0, 100, (data_shape0[plot_axis0] + 1)), (data_shape0[slider_axis0], 1))
-
+    xdata = np.tile(np.linspace(
+        0, 100, (data_shape0[plot_axis0] + 1)), (data_shape0[slider_axis0], 1))
     ani = LineAnimator(data0, plot_axis_index=plot_axis0, axis_ranges=[None, xdata])
-
     return ani.fig
-
-
-@figure_test
-def test_imageanimator_figure():
-    AIA_171 = sunpy.data.test.get_test_filepath('aia_171_level1.fits')
-    KCOR = sunpy.data.test.get_test_filepath('20181209_180305_kcor_l1.5_rebinned.fits')
-    map_seuence = sunpy.map.Map(AIA_171, KCOR, sequence=True)
-    sequence_array = map_seuence.as_array()
-    wcs_input_dict = {f'{key}{n+1}': map_seuence.all_meta()[0].get(f'{key}{n}')
-                      for n, key in product([1, 2], ['CTYPE', 'CUNIT', 'CDELT'])}
-    t0, t1 = map(parse_time, [k['date-obs'] for k in map_seuence.all_meta()])
-    time_diff = (t1 - t0).to(u.s)
-    wcs_input_dict.update({'CTYPE1': 'Time', 'CUNIT1': time_diff.unit.name, 'CDELT1': time_diff.value})
-    wcs = astropy.wcs.WCS(wcs_input_dict)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", SunpyDeprecationWarning)
-        wcs_anim = ImageAnimatorWCS(sequence_array, wcs=wcs, vmax=1000, image_axes=[0, 1])
-
-    return wcs_anim.fig

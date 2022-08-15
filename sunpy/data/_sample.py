@@ -1,17 +1,15 @@
 import os
-import warnings
 from pathlib import Path
-from collections import namedtuple
 from urllib.parse import urljoin
 
-import parfive
+from sunpy import log
+from sunpy.util.config import _is_writable_dir, get_and_create_sample_dir
+from sunpy.util.parfive_helpers import Downloader
 
-from sunpy.util.config import get_and_create_sample_dir, _is_writable_dir
-from sunpy.util.exceptions import SunpyUserWarning
-
-_base_urls = (
-    'http://data.sunpy.org/sunpy/v1/',
+_BASE_URLS = (
+    'https://github.com/sunpy/data/raw/main/sunpy/v1/',
     'https://github.com/sunpy/sample-data/raw/master/sunpy/v1/',
+    'http://data.sunpy.org/sunpy/v1/',
 )
 
 # Shortcut requirements:
@@ -23,9 +21,9 @@ _base_urls = (
 # All separated by underscores
 
 # the files should include necessary extensions
-_sample_files = {
+_SAMPLE_DATA = {
     # Do roll image first because it's the largest file.
-    "AIA_171_ROLL_IMAGE": "aiacalibim5.fits.gz",
+    "AIA_171_ROLL_IMAGE": "aiacalibim5.fits",
     "HMI_LOS_IMAGE": "HMI20110607_063211_los_lowres.fits",
     "AIA_131_IMAGE": "AIA20110607_063301_0131_lowres.fits",
     "AIA_171_IMAGE": "AIA20110607_063302_0171_lowres.fits",
@@ -34,6 +32,7 @@ _sample_files = {
     "AIA_094_IMAGE": "AIA20110607_063305_0094_lowres.fits",
     "AIA_1600_IMAGE": "AIA20110607_063305_1600_lowres.fits",
     "AIA_193_IMAGE": "AIA20110607_063307_0193_lowres.fits",
+    "AIA_1600_VENUS_IMAGE": "aia_lev1_1600a_2012_06_06t04_07_29_12z_image_lev1_lowres.fits",
     "AIA_193_CUTOUT01_IMAGE": "AIA20110607_063307_0193_cutout.fits",
     "AIA_193_CUTOUT02_IMAGE": "AIA20110607_063931_0193_cutout.fits",
     "AIA_193_CUTOUT03_IMAGE": "AIA20110607_064555_0193_cutout.fits",
@@ -42,26 +41,85 @@ _sample_files = {
     "EIT_195_IMAGE": "eit_l1_20110607_203753.fits",
     "RHESSI_IMAGE": "hsi_image_20110607_063300.fits",
     "CALLISTO_SPECTRUM": "BIR_20110607_062400_10.fit",
-    # Not in the sample-data repo
-    # "RHESSI_EVENT_LIST": "hsi_calib_ev_20020220_1106_20020220_1106_25_40.fits",
     "SWAP_LEVEL1_IMAGE": "swap_lv1_20110607_063329.fits",
     "EVE_TIMESERIES": "20110607_EVE_L0CS_DIODES_1m.txt",
-    # Uncomment this if it needs to be used. Commented out to save bandwidth.
-    # "LYRA_LIGHTCURVE": ("lyra_20110810-000000_lev2_std.fits.gz", ,
     "LYRA_LEVEL3_TIMESERIES": "lyra_20110607-000000_lev3_std.fits",
     "GOES_XRS_TIMESERIES": "go1520110607.fits",
     "GBM_TIMESERIES": "glg_cspec_n5_110607_v00.pha",
-    "NOAAINDICES_TIMESERIES": "swpc_solar_cycle_indices.txt",
-    "NOAAPREDICT_TIMESERIES": "predicted-sunspot-radio-flux.txt",
     "RHESSI_TIMESERIES": "hsi_obssumm_20110607_025.fits",
-    "NORH_TIMESERIES": "tca110607.fits"
+    "NORH_TIMESERIES": "tca110607.fits",
+    "LOFAR_IMAGE": "LOFAR_70MHZ_20190409_131136.fits",
+    "SRS_TABLE": "20110607SRS.txt",
+    "AIA_193_JUN2012": "AIA20120601_000007_0193_lowres.fits",
+    "STEREO_A_195_JUN2012": "20120601_000530_n4eua.fits",
+    "STEREO_B_195_JUN2012": "20120601_000530_n4eub.fits",
 }
 
 # Reverse the dict because we want to use it backwards, but it is nicer to
 # write the other way around
-_sample_files = {v: k for k, v in _sample_files.items()}
+_SAMPLE_FILES = {v: k for k, v in _SAMPLE_DATA.items()}
 
-_error = namedtuple("error", ("filepath_partial", "url", "response"))
+
+def _download_sample_data(base_url, sample_files, overwrite):
+    """
+    Downloads a list of files.
+
+    Parameters
+    ----------
+    base_url : str
+        Base URL for each file.
+    sample_files : list of tuples
+        List of tuples that are (URL_NAME, SAVE_NAME).
+    overwrite : bool
+        Will overwrite a file on disk if True.
+
+    Returns
+    -------
+    `parfive.Results`
+        Download results. Will behave like a list of files.
+    """
+    dl = Downloader(overwrite=overwrite, progress=True, headers={'Accept-Encoding': 'identity'})
+
+    for url_file_name, fname in sample_files:
+        url = urljoin(base_url, url_file_name)
+        dl.enqueue_file(url, filename=fname)
+
+    results = dl.download()
+    return results
+
+
+def _retry_sample_data(results, new_url_base):
+    # In case we have a broken file on disk, overwrite it.
+    dl = Downloader(overwrite=True, progress=True, headers={'Accept-Encoding': 'identity'})
+
+    for err in results.errors:
+        file_name = err.url.split("/")[-1]
+        log.debug(
+            f"Failed to download {_SAMPLE_FILES[file_name]} from {err.url}: {err.exception}")
+        # Update the url to a mirror and requeue the file.
+        new_url = urljoin(new_url_base, file_name)
+        log.debug(f"Attempting redownload of {_SAMPLE_FILES[file_name]} using {new_url}")
+        dl.enqueue_file(new_url, filename=err.filepath_partial)
+
+    extra_results = dl.download()
+
+    # Make a new results object which contains all the successful downloads
+    # from the previous results object and this retry, and all the errors from
+    # this retry.
+    new_results = results + extra_results
+    new_results._errors = extra_results._errors
+    return new_results
+
+
+def _handle_final_errors(results):
+    for err in results.errors:
+        file_name = err.url.split("/")[-1]
+        log.debug(f"Failed to download {_SAMPLE_FILES[file_name]} from {err.url}: {err.exception}"
+                  )
+        log.error(
+            f"Failed to download {_SAMPLE_FILES[file_name]} from all mirrors,"
+            "the file will not be available."
+        )
 
 
 def download_sample_data(overwrite=False):
@@ -70,7 +128,7 @@ def download_sample_data(overwrite=False):
 
     Parameters
     ----------
-    overwrite: `bool`
+    overwrite : `bool`
         Overwrite existing sample data.
     """
     # Workaround for tox only. This is not supported as a user option
@@ -82,44 +140,29 @@ def download_sample_data(overwrite=False):
         # Creating the directory for sample files to be downloaded
         sampledata_dir = Path(get_and_create_sample_dir())
 
-    dl = parfive.Downloader(overwrite=overwrite)
-
-    first_url = _base_urls[0]
-
     already_downloaded = []
-    for file_name in _sample_files.keys():
-        url = urljoin(first_url, file_name)
-        fname = sampledata_dir/file_name
-        # We have to avoid calling download if we already have all the files.
+    to_download = []
+    for url_file_name in _SAMPLE_FILES.keys():
+        fname = sampledata_dir/url_file_name
+        # We want to avoid calling download if we already have all the files.
         if fname.exists() and not overwrite:
             already_downloaded.append(fname)
         else:
-            dl.enqueue_file(url, filename=sampledata_dir/file_name)
+            # URL and Filename pairs
+            to_download.append((url_file_name, fname))
 
-    if dl.queued_downloads:
-        results = dl.download()
+    if to_download:
+        results = _download_sample_data(_BASE_URLS[0], to_download, overwrite=overwrite)
     else:
         return already_downloaded
 
-    if not results.errors:
-        return results
+    # Something went wrong.
+    if results.errors:
+        for next_url in _BASE_URLS[1:]:
+            results = _retry_sample_data(results, next_url)
+            if not results.errors:
+                break
+        else:
+            _handle_final_errors(results)
 
-    for retry_url in _base_urls[1:]:
-        for i, err in enumerate(results.errors):
-            file_name = Path(err.url).name
-            # Overwrite the parfive error to change the url to a mirror
-            new_url = urljoin(retry_url, file_name)
-            results._errors[i] = _error(err.filepath_partial,
-                                        new_url,
-                                        err.exception)
-
-        results = dl.retry(results)
-
-        if not results.errors:
-            return results
-
-    for err in results.errors:
-        file_name = Path(err.url).name
-        warnings.warn(f"File {file_name} not found.", SunpyUserWarning)
-
-    return results
+    return results + already_downloaded

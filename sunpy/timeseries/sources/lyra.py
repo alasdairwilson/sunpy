@@ -4,9 +4,8 @@ This module provies Proba-2 `~sunpy.timeseries.TimeSeries` source.
 import sys
 from collections import OrderedDict
 
+import matplotlib.pyplot as plt
 import pandas
-import matplotlib as mpl
-from matplotlib import pyplot as plt
 
 import astropy.units as u
 from astropy.time import TimeDelta
@@ -53,13 +52,54 @@ class LYRATimeSeries(GenericTimeSeries):
     * `LYRA Data Homepage <http://proba2.sidc.be/data/LYRA>`_
     * `LYRA Instrument Homepage <http://proba2.sidc.be/about/LYRA>`_
     """
-    # Class attribute used to specify the source class of the TimeSeries.
+    # Class attributes used to specify the source class of the TimeSeries
+    # and a URL to the mission website.
     _source = 'lyra'
+    _url = "https://proba2.sidc.be/about/LYRA"
+
+    def plot(self, axes=None, columns=None, names=3, **kwargs):
+        """
+        Plots the LYRA data.
+
+        Parameters
+        ----------
+        axes : array of `matplotlib.axes.Axes`, optional
+            The axes on which to plot the TimeSeries.
+        columns : list[str], optional
+            If provided, only plot the specified columns.
+        names : `int`, optional
+            The number of columns to plot. Defaults to 3.
+        **kwargs : `dict`
+            Additional plot keyword arguments that are handed to `~matplotlib.axes.Axes.plot` functions.
+
+        Returns
+        -------
+        array of `~matplotlib.axes.Axes`
+            The plot axes.
+        """
+        axes, columns = self._setup_axes_columns(axes, columns, subplots=True)
+        lyranames = ({'CHANNEL1': 'Lyman alpha', 'CHANNEL2': 'Herzberg cont.',
+                      'CHANNEL3': 'Al filter', 'CHANNEL4': 'Zr filter'},
+                     {'CHANNEL1': '120-123nm', 'CHANNEL2': '190-222nm',
+                      'CHANNEL3': '17-80nm + <5nm', 'CHANNEL4': '6-20nm + <2nm'})
+        for i, name in enumerate(columns):
+            axes[i].plot(self._data[columns[i]],
+                         label=columns[i])
+            axes[i].legend(loc="upper right")
+            plt.xticks(rotation=30)
+            if names < 3:
+                name = lyranames[names][columns[i]]
+            else:
+                name = lyranames[0][columns[i]] + ' \n (' + lyranames[1][columns[i]] + ')'
+            axes[i].locator_params(axis='y', nbins=6)
+            axes[i].set_ylabel(f"{name} \n (W/m**2)", fontsize=9.5)
+        self._setup_x_axis(axes)
+        return axes
 
     @peek_show
-    def peek(self, names=3, **kwargs):
+    def peek(self, title=None, columns=None, names=3, **kwargs):
         """
-        Plots the LYRA data. An example is shown below:
+        Displays the LYRA data by calling `~sunpy.timeseries.sources.lyra.LYRATimeSeries.plot`.
 
         .. plot::
 
@@ -70,36 +110,25 @@ class LYRATimeSeries(GenericTimeSeries):
 
         Parameters
         ----------
+        title : `str`, optional
+            The title of the plot.
+        columns : list[str], optional
+            If provided, only plot the specified columns.
         names : `int`, optional
             The number of columns to plot. Defaults to 3.
         **kwargs : `dict`
             Additional plot keyword arguments that are handed to
             :meth:`pandas.DataFrame.plot`.
         """
-        # Check we have a timeseries valid for plotting
-        self._validate_data_for_plotting()
-
-        lyranames = (('Lyman alpha', 'Herzberg cont.', 'Al filter', 'Zr filter'),
-                     ('120-123nm', '190-222nm', '17-80nm + <5nm', '6-20nm + <2nm'))
-        figure = plt.figure()
-        plt.subplots_adjust(left=0.17, top=0.94, right=0.94, bottom=0.15)
-        axes = plt.gca()
-
-        axes = self.to_dataframe().plot(ax=axes, subplots=True, sharex=True, **kwargs)
-
-        for i, name in enumerate(self.to_dataframe().columns):
-            if names < 3:
-                name = lyranames[names][i]
-            else:
-                name = lyranames[0][i] + ' \n (' + lyranames[1][i] + ')'
-            axes[i].set_ylabel(f"{name} \n (W/m**2)", fontsize=9.5)
-
-        axes[0].set_title("LYRA ({0:{1}})".format(self.to_dataframe().index[0], TIME_FORMAT))
-        axes[-1].set_xlabel("Time")
-        for axe in axes:
-            axe.locator_params(axis='y', nbins=6)
-
-        return figure
+        axes = self.plot(columns=columns, names=names, **kwargs)
+        if title is None:
+            title = "LYRA ({0:{1}})".format(self.to_dataframe().index[0], TIME_FORMAT)
+        axes[0].set_title(title)
+        fig = axes[-1].get_figure()
+        fig.subplots_adjust(left=0.17, top=0.94, right=0.94, bottom=0.15)
+        fig = axes[0].get_figure()
+        fig.subplots_adjust(left=0.17, top=0.94, right=0.94, bottom=0.15)
+        return fig
 
     @classmethod
     def _parse_file(cls, filepath):
@@ -147,7 +176,7 @@ class LYRATimeSeries(GenericTimeSeries):
 
         for i, col in enumerate(fits_record.columns[1:-1]):
             # temporary patch for big-endian data bug on pandas 0.13
-            if fits_record.field(i+1).dtype.byteorder == '>' and sys.byteorder =='little':
+            if fits_record.field(i+1).dtype.byteorder == '>' and sys.byteorder == 'little':
                 table[col.name] = fits_record.field(i + 1).byteswap().newbyteorder()
             else:
                 table[col.name] = fits_record.field(i + 1)

@@ -1,5 +1,5 @@
 Map
 ===
 
-This section contains any examples which showcase how SunPy's
-`Map <sunpy.map.map_factory.MapFactory>` can be used with solar data.
+This section contains any examples which showcase how sunpy's
+`~sunpy.map.Map` can be used with solar data.

@@ -1,29 +1,28 @@
-"""Test cases for SOHO Map subclasses.
-This particular test file pertains to MDIMap.
-@Author: Pritish C. (VaticanCameos)
 """
-
-import os
-import glob
-
+Test cases for SOHO MDIMap subclass.
+"""
 import pytest
 
 import astropy.units as u
+from astropy.coordinates import Angle
 
-from sunpy.coordinates import frames
-from sunpy.map.sources.soho import MDIMap
-from sunpy.map import Map
-import sunpy.data.test
+from sunpy.data.test import get_dummy_map_from_header, get_test_filepath
+from sunpy.map.sources.soho import MDIMap, MDISynopticMap
+from sunpy.util.exceptions import SunpyMetadataWarning
+
+__author__ = 'Pritish C. (VaticanCameos)'
 
 
 @pytest.fixture
 def mdi():
-    path = sunpy.data.test.rootdir
-    fitspath = glob.glob(os.path.join(path, "mdi_fd_Ic_6h_01d.5871.0000_s.fits"))
-    return Map(fitspath)
+    return get_dummy_map_from_header(get_test_filepath("mdi.fd_Ic.20101015_230100_TAI.data.header"))
 
 
-# MDI Tests
+@pytest.fixture
+def mdi_synoptic():
+    return get_dummy_map_from_header(get_test_filepath('mdi_synoptic.header'))
+
+
 def test_fitstoMDI(mdi):
     """Tests the creation of MDIMap using FITS."""
     assert isinstance(mdi, MDIMap)
@@ -41,9 +40,9 @@ def test_observatory(mdi):
     assert mdi.observatory == "SOHO"
 
 
-def test_measurement(mdi):
-    """Tests the measurement property of the MDIMap object."""
-    assert mdi.measurement == "continuum"
+def test_instrument(mdi):
+    """Tests the instrument property of the MDIMap object."""
+    assert mdi.instrument == "MDI"
 
 
 def test_waveunit(mdi):
@@ -51,12 +50,36 @@ def test_waveunit(mdi):
 
 
 def test_observer(mdi):
-    assert isinstance(mdi.observer_coordinate.frame, frames.HeliographicStonyhurst)
-    assert u.allclose(mdi.observer_coordinate.lat, -5.774028172878*u.deg)
-    assert u.allclose(mdi.observer_coordinate.lon, -0.10522355*u.deg)
-    assert u.allclose(mdi.observer_coordinate.radius, 0.9739569156244*u.AU)
+    assert mdi.observer_coordinate.frame.name == 'heliographic_stonyhurst'
+    assert u.allclose(mdi.observer_coordinate.lat, Angle(mdi.meta['CRLT_OBS']*u.degree))
+    assert u.allclose(mdi.observer_coordinate.radius, mdi.meta['DSUN_OBS']*u.m)
 
 
 def test_carrington(mdi):
-    assert u.allclose(mdi.carrington_longitude, mdi.meta['obs_l0']*u.deg)
-    assert u.allclose(mdi.carrington_latitude, mdi.meta['obs_b0']*u.deg)
+    assert u.allclose(mdi.carrington_longitude, Angle(mdi.meta['CRLN_OBS']*u.deg))
+    assert u.allclose(mdi.carrington_latitude, Angle(mdi.meta['CRLT_OBS']*u.deg))
+
+
+def test_unit(mdi):
+    assert mdi.unit == u.dimensionless_unscaled
+
+
+@pytest.mark.filterwarnings("error")
+def test_synoptic_source(mdi_synoptic):
+    assert isinstance(mdi_synoptic, MDISynopticMap)
+    # Check that the WCS is valid
+    with pytest.warns(SunpyMetadataWarning, match='Missing metadata for observer'):
+        mdi_synoptic.wcs
+
+
+def test_wcs(mdi, mdi_synoptic):
+    # Smoke test that WCS is valid and can transform from pixels to world coordinates
+    mdi.pixel_to_world(0*u.pix, 0*u.pix)
+    with pytest.warns(SunpyMetadataWarning, match='Missing metadata for observer'):
+        mdi_synoptic.pixel_to_world(0*u.pix, 0*u.pix)
+
+
+def test_unit_synoptic(mdi_synoptic):
+    assert mdi_synoptic.unit == u.G
+    assert mdi_synoptic.unit == u.Unit("Mx/cm^2")
+    assert mdi_synoptic.unit.to_string() == 'Mx / cm2'

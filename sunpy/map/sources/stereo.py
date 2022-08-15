@@ -1,14 +1,12 @@
 """STEREO Map subclass definitions"""
-#pylint: disable=W0221,W0222,E1121
 
 __author__ = "Keith Hughitt"
 __email__ = "keith.hughitt@nasa.gov"
 
-import numpy as np
 
+import astropy.units as u
 from astropy.visualization import PowerStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
-import astropy.units as u
 
 from sunpy.map import GenericMap
 from sunpy.map.sources.source_type import source_stretch
@@ -32,39 +30,28 @@ class EUVIMap(GenericMap):
     """
 
     def __init__(self, data, header, **kwargs):
+        super().__init__(data, header, **kwargs)
 
-        GenericMap.__init__(self, data, header, **kwargs)
         self._nickname = "{}-{}".format(self.detector, self.observatory[-1])
-        self.plot_settings['cmap'] = 'sohoeit{wl:d}'.format(wl=int(self.wavelength.value))
-        self.plot_settings['norm'] = ImageNormalize(stretch=source_stretch(self.meta, PowerStretch(0.25)), clip=False)
-        self.meta['waveunit'] = 'Angstrom'
+        self.plot_settings['cmap'] = 'euvi{wl:d}'.format(wl=int(self.wavelength.value))
+        self.plot_settings['norm'] = ImageNormalize(
+            stretch=source_stretch(self.meta, PowerStretch(0.25)), clip=False)
 
-        # Try to identify when the FITS meta data does not have the correct
-        # date FITS keyword
-        if ('date_obs' in self.meta) and not('date-obs' in self.meta):
-            self.meta['date-obs'] = self.meta['date_obs']
+    def _rotation_matrix_from_crota(self):
+        return super()._rotation_matrix_from_crota('CROTA')
+
+    @property
+    def waveunit(self):
+        unit = self.meta.get("waveunit", "Angstrom")
+        return u.Unit(unit)
 
     @property
     def rsun_arcseconds(self):
-        """
-        Radius of the sun in arcseconds.
-
-        References
-        ----------
-        https://sohowww.nascom.nasa.gov/solarsoft/stereo/secchi/doc/FITS_keywords.pdf
-        """
         return self.meta.get('rsun', None)
 
     @property
     def rsun_obs(self):
-        """
-        Radius of the sun in arcseconds as a quantity.
-
-        References
-        ----------
-        https://sohowww.nascom.nasa.gov/solarsoft/stereo/secchi/doc/FITS_keywords.pdf
-        """
-        rsun_arcseconds = self.meta.get('rsun', None)
+        rsun_arcseconds = self.rsun_arcseconds
 
         if rsun_arcseconds is None:
             rsun_arcseconds = super().rsun_obs
@@ -97,23 +84,15 @@ class CORMap(GenericMap):
     """
 
     def __init__(self, data, header, **kwargs):
-
-        GenericMap.__init__(self, data, header, **kwargs)
+        super().__init__(data, header, **kwargs)
 
         self._nickname = "{}-{}".format(self.detector, self.observatory[-1])
         self.plot_settings['cmap'] = 'stereocor{det!s}'.format(det=self.detector[-1])
-        self.plot_settings['norm'] = ImageNormalize(stretch=source_stretch(self.meta, PowerStretch(0.5)), clip=False)
-
-        # Try to identify when the FITS meta data does not have the correct
-        # date FITS keyword
-        if ('date_obs' in self.meta) and not('date-obs' in self.meta):
-            self.meta['date-obs'] = self.meta['date_obs']
+        self.plot_settings['norm'] = ImageNormalize(
+            stretch=source_stretch(self.meta, PowerStretch(0.5)), clip=False)
 
     @property
     def measurement(self):
-        """
-        Returns the type of data observed.
-        """
         # TODO: This needs to do more than white-light.  Should give B, pB, etc.
         return "white-light"
 
@@ -141,23 +120,17 @@ class HIMap(GenericMap):
     * `STEREO SECCHI <https://secchi.nrl.navy.mil>`_
     * `HI Instrument Page <http://www.stereo.rl.ac.uk>`_
     """
-    def __init__(self, data, header, **kwargs):
 
-        GenericMap.__init__(self, data, header, **kwargs)
+    def __init__(self, data, header, **kwargs):
+        super().__init__(data, header, **kwargs)
+
         self._nickname = "{}-{}".format(self.detector, self.observatory[-1])
         self.plot_settings['cmap'] = 'stereohi{det!s}'.format(det=self.detector[-1])
-        self.plot_settings['norm'] = ImageNormalize(stretch=source_stretch(self.meta, PowerStretch(0.25)), clip=False)
-
-        # Try to identify when the FITS meta data does not have the correct
-        # date FITS keyword
-        if ('date_obs' in self.meta) and not('date-obs' in self.meta):
-            self.meta['date-obs'] = self.meta['date_obs']
+        self.plot_settings['norm'] = ImageNormalize(
+            stretch=source_stretch(self.meta, PowerStretch(0.25)), clip=False)
 
     @property
     def measurement(self):
-        """
-        Returns the type of data observed.
-        """
         # TODO: This needs to do more than white-light.  Should give B, pB, etc.
         return "white-light"
 

@@ -1,7 +1,7 @@
 .. _sunpy-coordinates:
 
-SunPy coordinates
-=================
+Coordinates (`sunpy.coordinates`)
+*********************************
 
 This sub-package contains:
 
@@ -13,7 +13,7 @@ The SunPy coordinate framework extends the
 :ref:`Astropy coordinates framework <astropy:astropy-coordinates>`.
 
 Supported Coordinate Systems
-----------------------------
+============================
 
 .. list-table::
    :widths: auto
@@ -84,7 +84,7 @@ and `Franz & Harper (2002) <https://doi.org/10.1016/S0032-0633(01)00119-2>`_
 
 
 Getting Started
----------------
+===============
 
 The easiest interface to work with coordinates is through the `~astropy.coordinates.SkyCoord` class::
 
@@ -96,8 +96,8 @@ The easiest interface to work with coordinates is through the `~astropy.coordina
   >>> c = SkyCoord(x=-72241.0*u.km, y=361206.1*u.km, z=589951.4*u.km, frame=frames.Heliocentric)
   >>> c = SkyCoord(70*u.deg, -30*u.deg, frame=frames.HeliographicStonyhurst)
   >>> c
-  <SkyCoord (HeliographicStonyhurst: obstime=None): (lon, lat, radius) in (deg, deg, km)
-      (70., -30., 695700.)>
+  <SkyCoord (HeliographicStonyhurst: obstime=None, rsun=695700.0 km): (lon, lat) in deg
+      (70., -30.)>
 
 
 It is also possible to use strings to specify the frame but in that case make sure to
@@ -132,14 +132,14 @@ than a list of `~astropy.coordinates.SkyCoord` objects, because it will be
 
 
 Accessing Coordinates
-^^^^^^^^^^^^^^^^^^^^^
+---------------------
 
 Individual coordinates can be accessed via attributes on the SkyCoord object,
 but the names of the components of the coordinates can depend on the the frame and the chosen
 representation (e.g., Cartesian versus spherical).
 
 `~sunpy.coordinates.Helioprojective`
-####################################
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 For the helioprojective frame, the theta_x and theta_y components are accessed as
 ``Tx`` and ``Ty``, respectively::
@@ -151,7 +151,7 @@ For the helioprojective frame, the theta_x and theta_y components are accessed a
   <Latitude 100. arcsec>
 
 `~sunpy.coordinates.Heliocentric`
-#################################
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Heliocentric is typically used with Cartesian components::
 
@@ -164,17 +164,17 @@ Heliocentric is typically used with Cartesian components::
   <Quantity 589951.4 km>
 
 `~sunpy.coordinates.HeliographicStonyhurst` and `~sunpy.coordinates.HeliographicCarrington`
-###########################################################################################
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Both of the heliographic frames have the components of latitude, longitude and radius::
 
-   >>> c = SkyCoord(70*u.deg, -30*u.deg, frame=frames.HeliographicStonyhurst)
+   >>> c = SkyCoord(70*u.deg, -30*u.deg, 1*u.AU, frame=frames.HeliographicStonyhurst)
    >>> c.lat
    <Latitude -30. deg>
    >>> c.lon
    <Longitude 70. deg>
    >>> c.radius
-   <Distance 695700. km>
+   <Distance 1. AU>
 
 Heliographic Stonyhurst, when used with Cartesian components, is known as Heliocentric
 Earth Equatorial (HEEQ).  Here's an example of how to use
@@ -190,7 +190,7 @@ Earth Equatorial (HEEQ).  Here's an example of how to use
   <Quantity 589951.4 km>
 
 Transforming Between Coordinate Frames
---------------------------------------
+======================================
 
 Both `~astropy.coordinates.SkyCoord` and
 `~astropy.coordinates.BaseCoordinateFrame` instances have a
@@ -206,7 +206,7 @@ coordinates is::
    <SkyCoord (Helioprojective: obstime=2017-07-26T00:00:00.000, rsun=695700.0 km, observer=<HeliographicStonyhurst Coordinate for 'earth'>): (Tx, Ty) in arcsec
        (0., 0.)>
    >>> c.transform_to(frames.HeliographicCarrington)
-   <SkyCoord (HeliographicCarrington: obstime=2017-07-26T00:00:00.000, observer=<HeliographicStonyhurst Coordinate for 'earth'>): (lon, lat, radius) in (deg, deg, AU)
+   <SkyCoord (HeliographicCarrington: obstime=2017-07-26T00:00:00.000, rsun=695700.0 km, observer=<HeliographicStonyhurst Coordinate for 'earth'>): (lon, lat, radius) in (deg, deg, AU)
        (283.95956776, 5.31701821, 0.00465047)>
 
 It is also possible to transform to any coordinate system implemented in Astropy. This can be used to find the position of the solar limb in AltAz equatorial coordinates::
@@ -215,14 +215,14 @@ It is also possible to transform to any coordinate system implemented in Astropy
     >>> time = '2017-07-11 15:00'
     >>> greenbelt = EarthLocation(lat=39.0044*u.deg, lon=-76.8758*u.deg)
     >>> greenbelt_frame = AltAz(obstime=time, location=greenbelt)
-    >>> west_limb = SkyCoord(900*u.arcsec, 0*u.arcsec, frame=frames.Helioprojective, obstime=time)
-    >>> west_limb.transform_to(greenbelt_frame)  # doctest: +SKIP
-    <SkyCoord (AltAz: obstime=2017-07-11 15:00:00.000, location=(1126916.53031967, -4833386.58391627, 3992696.622115747) m, pressure=0.0 hPa, temperature=0.0 deg_C, relative_humidity=0, obswl=1.0 micron): (az, alt, distance) in (deg, deg, m)
-        (111.40839101, 57.16645715, 1.51860261e+11)>
-
+    >>> west_limb = SkyCoord(900*u.arcsec, 0*u.arcsec, frame=frames.Helioprojective,
+    ...                      observer=greenbelt.get_itrs(greenbelt_frame.obstime), obstime=time)  # doctest: +REMOTE_DATA
+    >>> west_limb.transform_to(greenbelt_frame)  # doctest: +REMOTE_DATA
+    <SkyCoord (AltAz: obstime=2017-07-11 15:00:00.000, location=(1126916.53031967, -4833386.58391627, 3992696.62211575) m, pressure=0.0 hPa, temperature=0.0 deg_C, relative_humidity=0.0, obswl=1.0 micron): (az, alt, distance) in (deg, deg, m)
+        (111.40782056, 57.1660434, 1.51859559e+11)>
 
 Observer Location Information
------------------------------
+=============================
 
 The `~sunpy.coordinates.frames.Helioprojective`, `~sunpy.coordinates.frames.Heliocentric`
 and `~sunpy.coordinates.frames.HeliographicCarrington` frames are defined by the location of
@@ -239,10 +239,12 @@ transformations cannot be performed.
 The location of the observer is automatically populated from meta data when
 coordinate frames are created using map.
 
+In the case of `~sunpy.coordinates.frames.HeliographicCarrington`, one can specify ``observer='self'`` to indicate that the coordinate itself should be used as the observer for defining the coordinate frame.
+
 It is possible to convert from a `~sunpy.coordinates.frames.Helioprojective`
 frame with one observer location to another
 `~sunpy.coordinates.frames.Helioprojective` frame with a different observer
-location, by converting through `~sunpy.coordinates.frames.Heliographic`, this
+location, by converting through `~sunpy.coordinates.frames.HeliographicStonyhurst`, this
 does involve making an assumption of the radius of the Sun to calculate the
 position on the solar sphere. The conversion can be performed as follows::
 
@@ -263,7 +265,7 @@ An example with two maps, named ``aia`` and ``stereo``::
 
 
 Design of the Coordinates Sub-Package
--------------------------------------
+=====================================
 
 This sub-package works by defining a collection of ``Frames``
 (`sunpy.coordinates.frames`), which exists on a transformation graph, where the
@@ -283,7 +285,7 @@ system see :ref:`astropy-coordinates-overview`
 
 
 Frames and SkyCoord
-^^^^^^^^^^^^^^^^^^^
+-------------------
 
 The `~astropy.coordinates.SkyCoord` class is a high level wrapper around the
 `astropy.coordinates` sub-package. It provides an easier way to create and transform
@@ -297,7 +299,7 @@ with a frame, some examples in `sunpy.coordinates` are ``obstime`` or
 ``observer`` for observer location. Only the frames where this data is
 meaningful have these attributes, i.e. only the Helioprojective frames have
 ``observer``. However, when you transform into another frame and then back to a
-projective frame using `SkyCoord` it will remember the attributes previously
+projective frame using `~astropy.coordinates.SkyCoord` it will remember the attributes previously
 provided, and repopulate the final frame with them. If you were to do
 transformations using the Frames alone this would not happen.
 
@@ -310,36 +312,33 @@ match the ``radius`` coordinate in the Heliographic frame. This is because you m
 mean to be describing a point above the defined 'surface' of the Sun.
 
 More Detailed Information
--------------------------
+=========================
 
 .. toctree::
    :maxdepth: 1
 
    carrington
    rotatedsunframe
+   velocities
    wcs
    other_api
 
 
 Reference/API
--------------
+=============
 
 .. automodapi:: sunpy.coordinates
-    :headings: ^#
 
 .. automodapi:: sunpy.coordinates.ephemeris
-    :headings: ^#
 
 .. automodapi:: sunpy.coordinates.sun
-    :headings: ^#
 
 .. automodapi:: sunpy.coordinates.utils
-    :headings: ^#
     :no-inheritance-diagram:
 
 
 Attribution
------------
+===========
 
 Some of this documentation was adapted from Astropy under the terms of the `BSD
 License

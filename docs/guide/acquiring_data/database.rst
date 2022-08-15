@@ -6,9 +6,9 @@
 
 .. _database_guide:
 
---------------------------
+**************************
 Using the database package
---------------------------
+**************************
 .. currentmodule:: sunpy.database
 
 The database package offers the possibility to save retrieved data (e.g.
@@ -23,7 +23,7 @@ instead of downloading it again from a remote server.
 The package :mod:`sunpy.database` was developed as part of Google Summer of Code (GSOC) 2013.
 
 1. Connecting and initializing the database
--------------------------------------------
+*******************************************
 To start a connection to an existing or a new database, create
 a :class:`Database` object:
 
@@ -60,7 +60,7 @@ can also be committed explicitly using the :meth:`Database.commit` method.
 
 
 2. Adding new entries
----------------------
+*********************
 Each entry in a database is an instance of the class
 :class:`tables.DatabaseEntry` with the following attributes:
 
@@ -89,7 +89,7 @@ size                   The size of the data in kilobytes (-1 if unknown).
 wavemin                The value of the measured wave length.
 wavemax                This is the same value as ``wavemin``. The value is
                        stored twice, because each
-                       ``suds.sudsobject.QueryResponseBlock`` which is
+                       `sunpy.net.dataretriever.client.QueryResponse` which is
                        used by the vso package contains both these values.
 path                   A local file path where the according FITS file is
                        saved.
@@ -110,21 +110,21 @@ tags                   A list of :class:`tables.Tag` instances.
   ``observation_time_start``, ``observation_time_end``, ``instrument``,  ``size``,
   ``wavemin``, and ``wavemax`` are set by methods which use the VSO interface. In
   particular, these are :meth:`Database.add_from_vso_query_result`,
-  :meth:`Database.download` and   possibly :meth:`Database.fetch`.
+  and possibly :meth:`Database.fetch`.
 
 * The attributes ``path`` and ``download_time`` are set by the method
-  :meth:`Database.download` and also possibly by :meth:`Database.fetch`.
+  ``Database.download`` and also possibly by :meth:`Database.fetch`.
 
-* ``starred`` is set or changed via :meth:`Database.star` or :meth:`unstar`.
+* ``starred`` is set or changed via :meth:`Database.star` or :meth:`Database.unstar`.
 
 * ``tags`` is set via :meth:`Database.tag` or :meth:`Database.remove_tag`.
 
 * The attribute ``fits_header_entries`` is set by the methods
-  :meth:`Database.download`, :meth:`Database.add_from_dir`, and
+  ``Database.download``, :meth:`Database.add_from_dir`, and
   :meth:`Database.add_from_file`.
 
 2.1 Adding entries from one FITS file
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+=====================================
 The method :meth:`Database.add_from_file` receives one positional argument
 (either a string or a file-like object) which is used to add at least one
 new entry from the given FITS file to the database. Why "at least one" and
@@ -146,7 +146,7 @@ passing on the value of the received argument (if it was a string)
 or by reading the value of ``file.name`` where ``file`` is the passed argument.
 If the path cannot be determined, it stays as ``None`` (the default value).
 
-``wavemin`` and `wavemax`` are only set if the wavelength unit
+``wavemin`` and ``wavemax`` are only set if the wavelength unit
 of the FITS file can be found out or if the ``default_waveunit`` attribute of
 the database object is set. These values are then
 used to convert from the used units to nanometers. The rationale behind
@@ -227,7 +227,7 @@ In section 3, more advanced formats of the slicing syntax are introduced.
         binary table extension
 
 2.2 Adding entries from a directory of FITS files
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+=================================================
 Adding all FITS files from a directory works by calling the method
 :meth:`Database.add_from_dir` and passing the desired directory to it. By
 setting the keyword argument ``ignore_already_added`` to ``True``, no
@@ -246,10 +246,10 @@ in the directory ``sampledata_dir``
     59
 
 2.3 Adding entries using the VSO interface
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+==========================================
 
 2.3.1 Adding entries from a VSO query result
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+--------------------------------------------
 The number of database entries that will be added from a VSO query result
 is equal to the value of ``len(qr)`` in the following code snippet. Note that
 :meth:`Database.add_from_vso_query_result` does not download any files,
@@ -277,7 +277,7 @@ After initialising the VSO client:
 
     >>> qr = client.search(
     ...     a.Time('2011-05-08', '2011-05-08 00:00:05'),
-    ...     a.Instrument('AIA'))  # doctest: +REMOTE_DATA
+    ...     a.Instrument.aia)  # doctest: +REMOTE_DATA
     >>> len(qr)  # doctest: +REMOTE_DATA
     4
     >>> database.add_from_vso_query_result(qr)  # doctest: +REMOTE_DATA
@@ -285,7 +285,7 @@ After initialising the VSO client:
     63
 
 2.3.2 "Clever" Fetching
-^^^^^^^^^^^^^^^^^^^^^^^
+-----------------------
 
 The method :meth:`Database.fetch` checks if the given query has already been
 used once to add entries to the database. Otherwise, the query is used to
@@ -309,7 +309,7 @@ has not been downloaded before.
 
     >>> entries = database.fetch(
     ...     a.Time('2012-08-05', '2012-08-05 00:00:05'),
-    ...     a.Instrument('AIA'))  # doctest: +REMOTE_DATA
+    ...     a.Instrument.aia)  # doctest: +REMOTE_DATA
     >>> len(database)  # doctest: +REMOTE_DATA
     67
 
@@ -318,7 +318,7 @@ because they have already been downloaded.
 
     >>> entries = database.fetch(
     ...     a.Time('2012-08-05', '2012-08-05 00:00:05'),
-    ...     a.Instrument('AIA'))  # doctest: +REMOTE_DATA
+    ...     a.Instrument.aia)  # doctest: +REMOTE_DATA
     >>> len(database)  # doctest: +REMOTE_DATA
     67
 
@@ -327,7 +327,7 @@ new date range whose files have not been downloaded yet.
 
     >>> entries = database.fetch(
     ...     a.Time('2013-08-05', '2013-08-05 00:00:05'),
-    ...     a.Instrument('AIA'))  # doctest: +REMOTE_DATA
+    ...     a.Instrument.aia)  # doctest: +REMOTE_DATA
     >>> len(database)  # doctest: +REMOTE_DATA
     71
 
@@ -338,12 +338,12 @@ downloaded. This means no new files are downloaded.
 
     >>> entries = database.fetch(
     ...     a.Time('2012-08-05 00:00:00', '2012-08-05 00:00:01'),
-    ...     a.Instrument('AIA'))  # doctest: +REMOTE_DATA
+    ...     a.Instrument.aia)  # doctest: +REMOTE_DATA
     >>> len(database)  # doctest: +REMOTE_DATA
     71
 
 2.4 Adding entries manually
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+===========================
 Although usually not required, it is also possible to add database entries
 by specifying the parameters manually. To do so pass the
 values as keyword arguments to :class:`tables.DatabaseEntry` as follows:
@@ -359,11 +359,11 @@ values as keyword arguments to :class:`tables.DatabaseEntry` as follows:
     >>> len(database) # doctest: +REMOTE_DATA
     72
 
-Note that the `in` operator only works as expected after the
+Note that the ``in`` operator only works as expected after the
 :meth:`Database.commit` method has been called!
 
 3. Displaying entries in a table
---------------------------------
+********************************
 In the previous code snippets 71 entries have been added,
 all of them saving a lot of data. To display the database in a table format
 there is a helper function. :func:`tables.display_entries` takes two
@@ -430,8 +430,8 @@ for more information.
      70    2013-08-05 00:00:02  2013-08-05 00:00:03        AIA    33.5    33.5
 
 4. Removing entries
--------------------
-`database.remove()` can be used to remove database entries from the SunPy
+*******************
+`Database.remove()` can be used to remove database entries from the sunpy
 database. It takes a ``tables.DatabaseEntry`` object as argument.
 
 For example, imagine we want to only have database entries which have an
@@ -476,10 +476,10 @@ method to remove those where there is no time set:
     Length = 39 rows
 
 5. Editing entries
-------------------
+******************
 
 5.1 Starring and unstarring entries
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+===================================
 The database package supports marking certain entries as "starred" using the
 :meth:`Database.star` method. For example, to star
 all values that have a wavelength of 20nm or higher:
@@ -508,7 +508,7 @@ To remove the star from these entries, the :meth:`Database.unstar` method
 works the same way.
 
 5.2 Setting and removing tags
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+=============================
 To add some more information by assigning tags to entries, the database package
 also supports *tags*. The ``tags`` property of a database object holds all tags
 that are saved in the database. For example, to assign the tag *spring* to all
@@ -534,7 +534,7 @@ year:
      63    2011-05-08 00:00:03  2011-05-08 00:00:04        AIA    33.5    33.5
 
 5.3 Manually changing attributes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+================================
 Attributes for entries in the database can be manually edited. The
 :meth:`Database.edit` method receives the database entry to be edited and any
 number of keyword arguments to describe which values to change and how. For
@@ -581,7 +581,7 @@ but it has one major disadvantage: this operation cannot be undone.
 See section 6 to see how undoing and redoing works.
 
 6. Undoing and redoing operations
----------------------------------
+*********************************
 A very handy feature of the database package is that every operation that
 changes the database in some way can be reverted. The Database class has
 the methods :meth:`Database.undo` and :meth:`Database.redo` to undo
@@ -669,31 +669,31 @@ stored end of observation time.
     Length = 39 rows
 
 7. Querying the database
-------------------------
+************************
 The API for querying databases is similar to querying the VSO using the
 method :meth:`sunpy.net.vso.VSOClient.search`. The :meth:`Database.search`
 method accepts any number of ORed query attributes (using \|) and
 combines them using AND. It returns a list of matched database entries.
 The special thing about querying databases is that all attributes support
 the unary operator ``~`` to negate specific attributes. Example: the query
-``~Instrument('EIT')`` returns all entries that have *not* been observed
+``Instrument.eit`` returns all entries that have *not* been observed
 with the EIT.
 
 7.1 Using VSO attributes
-~~~~~~~~~~~~~~~~~~~~~~~~
+========================
 Using the attributes from :mod:`sunpy.net.attrs` is quite intuitive:
 the simple attributes and the Time attribute work exactly as you expect.
 
 .. note::
 
-  The `near` parameter of :class:`sunpy.net.attrs.Time` is ignored, because
+  The ``near`` parameter of :class:`sunpy.net.attrs.Time` is ignored, because
   it's behaviour is not documented and it is different depending on the
   server which is requested.
 
 The following query returns the data that was added in section 2.3.2:
 
     >>> print(display_entries(
-    ...     database.search(a.Time('2012-08-05', '2012-08-05 00:00:05'), a.Instrument('AIA')),
+    ...     database.search(a.Time('2012-08-05', '2012-08-05 00:00:05'), a.Instrument.aia),
     ...     ['id', 'observation_time_start', 'observation_time_end',
     ...      'instrument', 'wavemin', 'wavemax'], sort=True))   # doctest:  +REMOTE_DATA
      id observation_time_start observation_time_end instrument wavemin wavemax
@@ -735,7 +735,7 @@ check `astropy.units`.
       9    2011-06-07 06:33:07 ...               19.3               19.3
 
 7.2 Database-specific attributes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+================================
 There are 5 additional query attributes supported by the database package.
 They can be imported from the submodule :mod:`sunpy.database.attrs` and are in
 particular:
@@ -773,7 +773,7 @@ with the value 'Angstrom':
 
 
 8. Caching
-----------
+**********
 All entries that are saved in the database are also saved in a cache
 in-memory. The type of the cache is determined at the initialization of
 the database object and cannot be changed after that. The default type is

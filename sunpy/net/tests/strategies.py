@@ -3,16 +3,17 @@ Provide a set of Hypothesis Strategies for various Fido related tests.
 """
 import datetime
 
-import numpy as np
 import hypothesis.strategies as st
+import numpy as np
 from hypothesis import assume
-from hypothesis.strategies import one_of, datetimes, sampled_from
+from hypothesis.strategies import datetimes, one_of, sampled_from
 
 import astropy.time
+import astropy.units as u
 from astropy.time import Time
 
 from sunpy.net import attrs as a
-from sunpy.time import TimeRange
+from sunpy.time import TimeRange, parse_time
 
 TimesLeapsecond = sampled_from((Time('2015-06-30T23:59:60'),
                                 Time('2012-06-30T23:59:60')))
@@ -34,8 +35,7 @@ def TimeDelta(draw):
     Timedelta strategy that limits the maximum timedelta to being positive and
     abs max is about 10 weeks + 10 days + 10 hours + 10 minutes + a bit
     """
-    keys = st.sampled_from(['weeks', 'days', 'hours', 'minutes', 'seconds'])
-    values = st.floats(min_value=1, max_value=10)
+    st.sampled_from(['weeks', 'days', 'hours', 'minutes', 'seconds'])
     time_dict = {'days': st.floats(min_value=1, max_value=8),
                  'hours': st.floats(min_value=1, max_value=12),
                  'minutes': st.floats(min_value=1, max_value=30),
@@ -55,7 +55,7 @@ def offline_instruments():
     Returns a strategy for any instrument that does not need the internet to do
     a query.
     """
-    offline_instr = ['noaa-indices', 'noaa-predict', 'soon']
+    offline_instr = ['noaa-indices', 'noaa-predict']
     offline_instr = st.builds(a.Instrument, st.sampled_from(offline_instr))
 
     return st.one_of(offline_instr)
@@ -66,7 +66,7 @@ def online_instruments():
     Returns a strategy for any instrument that does need the internet to do
     a query.
     """
-    online_instr = ['lyra', 'goes', 'eve', 'rhessi', 'norh']
+    online_instr = ['lyra', 'goes', 'eve', 'rhessi', 'norh', 'soon']
     online_instr = st.builds(a.Instrument, st.sampled_from(online_instr))
 
     return online_instr
@@ -106,19 +106,29 @@ def goes_time(draw, time=Times(
     assume(not (t1 <= Time('1983-05-01') <= t2))
     assume(not (t1 <= (Time('1983-05-01') + delta) <= t2))
     # This checks if the range start and stops on that day.
-    assume((np.abs(Time('1983-05-01') - t1)) > astropy.time.TimeDelta(0.01))
-    assume((np.abs(Time('1983-05-01') - t2)) > astropy.time.TimeDelta(0.01))
+    assume((np.abs(Time('1983-05-01') - t1)) > astropy.time.TimeDelta(0.01*u.s))
+    assume((np.abs(Time('1983-05-01') - t2)) > astropy.time.TimeDelta(0.01*u.s))
 
     tr = TimeRange(t1, t2)
 
     return a.Time(tr)
 
 
+@st.composite
+def srs_time(draw, time=Times(
+             max_value=datetime.datetime.now(),
+             min_value=datetime.datetime(1996, 1, 1)),
+             delta=TimeDelta()):
+    t1 = draw(time)
+    t2 = t1 + draw(delta)
+    assume(t1 < t2)
+    return a.Time(TimeRange(t1, t2))
+
+
 def range_time(min_date, max_date=Time.now()):
     time = Times(
-        min_value=datetime.datetime(1981, 1, 1, 0, 0),
-        max_value=datetime.datetime(datetime.datetime.utcnow().year, 1, 1, 0, 0),
+        min_value=parse_time(min_date).datetime,
+        max_value=parse_time(max_date).datetime
     )
-    time = time.filter(lambda x: min_date < x < max_date)
 
     return time_attr(time=time)

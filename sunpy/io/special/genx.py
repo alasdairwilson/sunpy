@@ -15,6 +15,7 @@ class SSWUnpacker(xdrlib.Unpacker):
     A `xdrlib.Unpacker` customisation to read strings and complex data as
     written by IDL.
     """
+
     def unpack_string(self):
         n = self.unpack_uint()
         if n > 0:
@@ -41,7 +42,7 @@ def read_struct_skeleton(xdrdata):
     tagdict = OrderedDict()
     for tt in tags:
         dim = xdrdata.unpack_uint()
-        arr_size = xdrdata.unpack_farray(dim + 2, xdrdata.unpack_int) # [7, 1]
+        arr_size = xdrdata.unpack_farray(dim + 2, xdrdata.unpack_int)  # [7, 1]
         typedata = arr_size[-2]
         if typedata == 8:  # it's a structure
             if dim == 2 and arr_size[0] == 1:
@@ -54,7 +55,8 @@ def read_struct_skeleton(xdrdata):
                 dim = 1
                 arr_size[0] = arr_size[1]
             if arr_size[-1] > 1:
-                tagdict[tt] = np.array([read_struct_skeleton(xdrdata)] * arr_size[-1]).reshape(arr_size[0:-2])
+                tagdict[tt] = np.array([read_struct_skeleton(xdrdata)] *
+                                       arr_size[-1]).reshape(arr_size[0:-2])
             else:
                 tagdict[tt] = read_struct_skeleton(xdrdata)
         else:
@@ -84,7 +86,7 @@ def struct_to_data(xdrdata, subskeleton):
         3: (xdrdata.unpack_int, np.int32),  # long
         4: (xdrdata.unpack_float, np.float32),
         5: (xdrdata.unpack_double, np.float64),
-        6: (xdrdata.unpack_complex, np.complex),
+        6: (xdrdata.unpack_complex, complex),
         7: (xdrdata.unpack_string, None),
         9: (xdrdata.unpack_complex_double, np.complex64),
         12: (xdrdata.unpack_uint, np.uint16),  # unsign int
@@ -124,7 +126,7 @@ def read_genx(filename):
     written by Sun Microsystems, Inc. June 1987.
 
     SolarSoft genx writer creates structures to store the values together with
-    the variable names. It use the `size` IDL function to include the data
+    the variable names. It use the ``size`` IDL function to include the data
     type, dimension and number of elements that each variable contains.
 
     Parameters
@@ -134,7 +136,7 @@ def read_genx(filename):
 
     Returns
     -------
-    output : `OrderedDict`
+    output : `~collections.OrderedDict`
         A dictionary with possibly nested dictionaries with the data in
         the genx file.
 
@@ -167,8 +169,11 @@ def read_genx(filename):
     # run as in multi-dim structure.
 
     dim = xdrdata.unpack_int()
-    arr_size = xdrdata.unpack_farray(dim + 2, xdrdata.unpack_int)  # noqa [1, 8, 1] = Main structure for the data
-    mainsize = arr_size[2]  # noqa the number of upper level strs noqa
+    # [1, 8, 1] = Main structure for the data
+    arr_size = xdrdata.unpack_farray(dim + 2, xdrdata.unpack_int)
+    # the number of upper level strs
+    # This is used somehow
+    mainsize = arr_size[2]  # NOQA
 
     skeleton = read_struct_skeleton(xdrdata)
     struct_to_data(xdrdata, skeleton)

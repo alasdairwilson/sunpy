@@ -1,16 +1,14 @@
 import os
 from pathlib import Path
 from datetime import datetime
-from warnings import warn
 from urllib.request import urlopen
 
 import astropy.units as u
 from astropy.time import TimeDelta
 
-from sunpy.time import parse_time
-from sunpy.util.exceptions import SunpyUserWarning
+from sunpy.util.exceptions import warn_user
 from sunpy.util.net import get_filename
-from sunpy.util.util import hash_file, replacement_filename
+from sunpy.util.util import hash_file
 
 __all__ = ['Cache']
 
@@ -38,7 +36,7 @@ class Cache:
         self._cache_dir = Path(cache_dir)
         self._expiry = expiry if expiry is None else TimeDelta(expiry)
 
-    def download(self, urls, redownload=False):
+    def download(self, urls, namespace='', redownload=False):
         """
         Downloads the files from the urls.
 
@@ -51,9 +49,9 @@ class Cache:
 
         Parameters
         ----------
-        urls: `list` or `str`
+        urls : `list` or `str`
             A list of urls or a single url.
-        redownload: `bool`
+        redownload : `bool`
             Whether to skip cache and redownload.
 
         Returns
@@ -83,7 +81,7 @@ class Cache:
             else:
                 return Path(details['file_path'])
 
-        file_path, file_hash, url = self._download_and_hash(urls)
+        file_path, file_hash, url = self._download_and_hash(urls, namespace)
 
         self._storage.store({
             'file_hash': file_hash,
@@ -99,7 +97,7 @@ class Cache:
 
         Parameters
         ----------
-        details: `dict`
+        details : `dict`
             Details detached from cache.
 
         Returns
@@ -108,12 +106,7 @@ class Cache:
             Whether the url has expired or not.
         """
         time = details.get("time", datetime.now().isoformat())
-
-        # TODO: Remove this once we depend on Python >=3.7
-        if hasattr(datetime, "fromisoformat"):
-            time = datetime.fromisoformat(time)
-        else:
-            time = parse_time(time).datetime
+        time = datetime.fromisoformat(time)
         return self._expiry and datetime.now() - time > self._expiry
 
     def get_by_hash(self, sha_hash):
@@ -122,8 +115,8 @@ class Cache:
 
         Parameters
         ----------
-        sha_hash: `str`
-            SHA-1 hash of the file.
+        sha_hash : `str`
+            SHA-256 hash of the file.
         """
         details = self._storage.find_by_key('file_hash', sha_hash)
         return details
@@ -134,19 +127,19 @@ class Cache:
 
         Parameters
         ----------
-        url: `str`
+        url : `str`
             URL of the file.
         """
         details = self._storage.find_by_key('url', url)
         return details
 
-    def _download_and_hash(self, urls):
+    def _download_and_hash(self, urls, namespace=''):
         """
         Downloads the file and returns the path, hash and url it used to download.
 
         Parameters
         ----------
-        urls: `list`
+        urls : `list`
             List of urls.
 
         Returns
@@ -155,17 +148,17 @@ class Cache:
             Path, hash and URL of the file.
         """
         def download(url):
-            path = self._cache_dir / get_filename(urlopen(url), url)
-            # replacement_filename returns a string and we want a Path object
-            path = Path(replacement_filename(path))
+            path = self._cache_dir / (namespace + get_filename(urlopen(url), url))
             self._downloader.download(url, path)
             shahash = hash_file(path)
             return path, shahash, url
 
+        errors = []
         for url in urls:
             try:
                 return download(url)
             except Exception as e:
-                warn(e, SunpyUserWarning)
+                warn_user(f"{e}")
+                errors.append(f"{e}")
         else:
-            raise RuntimeError("Download failed")
+            raise RuntimeError(errors)

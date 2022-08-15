@@ -1,17 +1,17 @@
 import warnings
 
-import pytest
-
 import numpy as np
+import pytest
 from numpy.testing import assert_allclose
 
-from astropy.coordinates import Angle, EarthLocation, SkyCoord
-from astropy.time import Time
 import astropy.units as u
+from astropy.coordinates import Angle, EarthLocation
 from astropy.tests.helper import assert_quantity_allclose
+from astropy.time import Time
 from astropy.utils.exceptions import ErfaWarning
 
 from sunpy.coordinates import sun
+from sunpy.sun.constants import radius
 from .helpers import assert_longitude_allclose
 
 # Ignore warnings that astropy throws when trying and failing to update ephemeris
@@ -67,13 +67,21 @@ def test_apparent_latitude(t1, t2):
     assert_quantity_allclose(sun.apparent_latitude(t2), Angle('-0.42s'), atol=0.005*u.arcsec)
 
 
-def test_angular_radius():
+def test_angular_radius(t2):
+    # Validate against a published value from the Astronomical Almanac (2013, C13)
+    # The Astromomical Almanac uses a slightly different radius for the Sun (6.96e5 km)
+    # The Astronomical Almanac also uses a small-angle approximation
+    # See https://archive.org/details/131123ExplanatorySupplementAstronomicalAlmanac/page/n212/mode/1up
+    assert_quantity_allclose(sun.angular_radius(t2),
+                             Angle('0d15m44.61s') / (6.96e5*u.km) * radius,  # scale to IAU radius
+                             atol=0.005*u.arcsec)
+
     # Regression-only test
-    # The Astronomical Almanac publishes values, but I don't know what physical radius they use
-    assert_quantity_allclose(sun.angular_radius("2012/11/11"), 968.871*u.arcsec, atol=1e-3*u.arcsec)
+    assert_quantity_allclose(sun.angular_radius("2012/11/11"), 968.875*u.arcsec, atol=1e-3*u.arcsec)
     with pytest.warns(ErfaWarning):
-        assert_quantity_allclose(sun.angular_radius("2043/03/01"), 968.326*u.arcsec, atol=1e-3*u.arcsec)
-    assert_quantity_allclose(sun.angular_radius("2001/07/21"), 944.039*u.arcsec, atol=1e-3*u.arcsec)
+        assert_quantity_allclose(sun.angular_radius("2043/03/01"),
+                                 968.330*u.arcsec, atol=1e-3*u.arcsec)
+    assert_quantity_allclose(sun.angular_radius("2001/07/21"), 944.042*u.arcsec, atol=1e-3*u.arcsec)
 
 
 def test_mean_obliquity_of_ecliptic(t1, t2):
@@ -91,7 +99,8 @@ def test_true_rightascension():
     # Regression-only test
     assert_quantity_allclose(sun.true_rightascension("2012/11/11"), 226.548*u.deg, atol=1e-3*u.deg)
     with pytest.warns(ErfaWarning):
-        assert_quantity_allclose(sun.true_rightascension("2142/02/03"), 316.466*u.deg, atol=1e-3*u.deg)
+        assert_quantity_allclose(sun.true_rightascension(
+            "2142/02/03"), 316.466*u.deg, atol=1e-3*u.deg)
     assert_quantity_allclose(sun.true_rightascension("2013/12/11"), 258.150*u.deg, atol=1e-3*u.deg)
 
 
@@ -203,12 +212,12 @@ def test_B0_jpl_horizons():
                   '2013-04-01': -6.543092,
                   '2013-05-01': -4.168016,
                   '2013-06-01': -0.663804,
-                  '2013-07-01':  2.873030,
-                  '2013-08-01':  5.784693,
-                  '2013-09-01':  7.194559,
-                  '2013-10-01':  6.719875,
-                  '2013-11-01':  4.378979,
-                  '2013-12-01':  0.881068}
+                  '2013-07-01': +2.873030,
+                  '2013-08-01': +5.784693,
+                  '2013-09-01': +7.194559,
+                  '2013-10-01': +6.719875,
+                  '2013-11-01': +4.378979,
+                  '2013-12-01': +0.881068}
     sun_B0 = sun.B0(Time(list(jpl_values.keys()), scale='tt'))
     assert_quantity_allclose(sun_B0, list(jpl_values.values()) * u.deg, atol=0.01*u.arcsec, rtol=0)
 
@@ -228,12 +237,12 @@ def test_B0_sunspice():
                   '2013-04-01': -6.5430498,
                   '2013-05-01': -4.1679382,
                   '2013-06-01': -0.66371004,
-                  '2013-07-01':  2.8731155,
-                  '2013-08-01':  5.7847503,
-                  '2013-09-01':  7.1945709,
-                  '2013-10-01':  6.7198381,
-                  '2013-11-01':  4.3789008,
-                  '2013-12-01':  0.88096965}
+                  '2013-07-01': +2.8731155,
+                  '2013-08-01': +5.7847503,
+                  '2013-09-01': +7.1945709,
+                  '2013-10-01': +6.7198381,
+                  '2013-11-01': +4.3789008,
+                  '2013-12-01': +0.88096965}
     sun_B0 = sun.B0(Time(list(jpl_values.keys()), scale='utc'))
     assert_quantity_allclose(sun_B0, list(jpl_values.values()) * u.deg, atol=0.005*u.arcsec, rtol=0)
 
@@ -256,8 +265,8 @@ def test_L0_astronomical_almanac():
                  '2013-04-01': 221.44,
                  '2013-05-01': 185.30,
                  '2013-06-01': 135.30,
-                 '2013-07-01':  98.22,
-                 '2013-08-01':  48.03,
+                 '2013-07-01':  98.22,  # NOQA
+                 '2013-08-01':  48.03,  # NOQA
                  '2013-09-01': 358.28,
                  '2013-10-01': 322.22,
                  '2013-11-01': 273.31,
@@ -279,8 +288,8 @@ def test_L0_jpl_horizons():
                   '2013-04-01': 221.440599,
                   '2013-05-01': 185.306476,
                   '2013-06-01': 135.303097,
-                  '2013-07-01':  98.221806,
-                  '2013-08-01':  48.035951,
+                  '2013-07-01':  98.221806,  # NOQA
+                  '2013-08-01':  48.035951,  # NOQA
                   '2013-09-01': 358.289921,
                   '2013-10-01': 322.226009,
                   '2013-11-01': 273.315206,
@@ -308,9 +317,9 @@ def test_L0_sunspice():
                '2013-03-01': -89.943817,
                '2013-04-01': -138.57536,
                '2013-05-01': -174.70941,
-               '2013-06-01':  135.28726,
-               '2013-07-01':  98.205970,
-               '2013-08-01':  48.020071,
+               '2013-06-01': +135.28726,
+               '2013-07-01': +98.205970,
+               '2013-08-01': +48.020071,
                '2013-09-01': -1.7260099,
                '2013-10-01': -37.789945,
                '2013-11-01': -86.700744,
@@ -333,8 +342,8 @@ def test_L0_sunspice():
                '2013-04-01': -138.56966,
                '2013-05-01': -174.70380,
                # '2013-06-01':  135.29281,  # skipping due to low precision in comparison
-               '2013-07-01':  98.211514,
-               '2013-08-01':  48.025667,
+               '2013-07-01': +98.211514,
+               '2013-08-01': +48.025667,
                '2013-09-01': -1.7203500,
                '2013-10-01': -37.784252,
                '2013-11-01': -86.695047,
@@ -389,18 +398,18 @@ def test_P_array_time():
                         '2013-10-01',
                         '2013-11-01',
                         '2013-12-01'], scale='tt'))
-    assert_quantity_allclose(sun_P, [  1.98,
+    assert_quantity_allclose(sun_P, [1.98,
                                      -12.23,
                                      -21.55,
                                      -26.15,
                                      -24.11,
                                      -15.39,
-                                      -2.64,
-                                      10.85,
-                                      21.08,
-                                      25.97,
-                                      24.47,
-                                      16.05]*u.deg, atol=5e-3*u.deg)
+                                     -2.64,
+                                     10.85,
+                                     21.08,
+                                     25.97,
+                                     24.47,
+                                     16.05]*u.deg, atol=5e-3*u.deg)
 
 
 def test_earth_distance():
@@ -464,6 +473,39 @@ def test_carrington_rotation_starttime(crot, julian_days):
                                  julian_days * u.day, atol=0.11*u.s)
 
 
+@pytest.mark.parametrize("crot, longitude, crot_fractional",
+                         [(2000, 360, 2000.0),
+                          (2000.0, 270, 2000.25)
+                          ])
+def test_carrington_rotation_time_longitude(crot, longitude, crot_fractional):
+    assert sun.carrington_rotation_time(crot*u.one, longitude*u.deg) == \
+        sun.carrington_rotation_time(crot_fractional*u.one)
+
+
+@pytest.mark.parametrize("crot, longitude, crot_fractional",
+                         [
+                             (np.array([2000, 2000]), np.array(
+                                 [180, 90]), np.array([2000.5, 2000.75])),
+                             (2000, np.array([180, 90]), np.array([2000.5, 2000.75])),
+                             (np.array([2000, 2000]), 180, np.array([2000.5, 2000.5]))
+                         ])
+def test_carrington_rotation_time_longitude_numpy(crot, longitude, crot_fractional):
+    assert all(sun.carrington_rotation_time(crot*u.one, longitude*u.deg) ==
+               sun.carrington_rotation_time(crot_fractional*u.one))
+
+
+@pytest.mark.parametrize("crot, longitude",
+                         [
+                             (2000, 0),
+                             (2000, -10),
+                             (2000, 400),
+                             (2000.5, 180),
+                         ])
+def test_carrington_rotation_time_longitude_err(crot, longitude):
+    with pytest.raises(ValueError):
+        sun.carrington_rotation_time(crot*u.one, longitude*u.deg)
+
+
 def test_carrington_rotation_roundtrip():
     t = Time('2010-1-1')
     crot = sun.carrington_rotation_number(t)
@@ -471,3 +513,9 @@ def test_carrington_rotation_roundtrip():
     dt = t - t_roundtrip
     # Stated precision in the docstring is 0.11 seconds
     assert_quantity_allclose(dt.to(u.s), 0*u.s, atol=0.11*u.s)
+
+
+def test_carrington_rotation_str():
+    # Check that by default a human parseable string is returned
+    t = sun.carrington_rotation_time(2210)
+    assert str(t) == '2018-10-26 20:48:16.137'
