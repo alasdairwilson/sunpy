@@ -51,28 +51,28 @@ expected_hrt_measurement_list = [
 
 expected_hrt_cmap_list = [
     'RdBu_r',
-    'hmimag',
-    'rainbow',
+    'grey',
+    'plasma',
     'RdGy',
-    'hsv',
-    'gist_heat',
+    'twilight',
+    'inferno',
     'RdBu_r',
-    'hmimag',
-    'rainbow',
+    'grey',
+    'plasma',
     'RdGy',
-    'hsv',
-    'gist_heat',
+    'twilight',
+    'inferno',
 ]
 
 expected_hrt_norm_list = [
     (None,None),
-    (-1500,1500),
+    (None,None),
     (None,None),
     (0,180),
     (0,180),
     (None,None),
     (None,None),
-    (-1500,1500),
+    (None,None),
     (None,None),
     (0,180),
     (0,180),
@@ -113,12 +113,12 @@ fdt_header_list = [
 ]
 
 expected_fdt_cmap_list = [
-    'hmimag',
-    'gist_heat'
+    'grey',
+    'inferno'
 ]
 
 expected_fdt_norm_list = [
-    (-1500,1500),
+    (None, None),
     (None, None)
 ]
 

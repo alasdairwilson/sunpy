@@ -19,12 +19,16 @@ from sunpy.net import attrs as a
 # Searching for PHI-HRT Data
 # --------------------------
 #
-# We first search for all **Solar Orbiter PHI-HRT** (High Resolution Telescope) data products # (excluding 'phi-hrt-stokes' which is not compatible with sunpy.map)
+# We first search for all **Solar Orbiter PHI-HRT** (High Resolution Telescope) 
+# data products # (excluding 'phi-hrt-stokes' which is not compatible with sunpy.map)
 
 t_start_hrt = Time('2024-03-23T20:00', format='isot', scale='utc')
 t_end_hrt = Time('2024-03-23T23:59', format='isot', scale='utc')
 
-search_results_phi_hrt_all = Fido.search(a.Instrument('PHI'), a.Time(t_start_hrt.value, t_end_hrt.value), (a.soar.Product('phi-hrt-blos') | a.soar.Product('phi-hrt-bmag') | a.soar.Product('phi-hrt-binc') | a.soar.Product('phi-hrt-bazi')| a.soar.Product('phi-hrt-vlos') | a.soar.Product('phi-hrt-icnt')))
+search_results_phi_hrt_all = Fido.search(a.Instrument('PHI'), a.Time(t_start_hrt.value, t_end_hrt.value), 
+                                         (a.soar.Product('phi-hrt-blos') | a.soar.Product('phi-hrt-bmag') | 
+                                          a.soar.Product('phi-hrt-binc') | a.soar.Product('phi-hrt-bazi')|
+                                          a.soar.Product('phi-hrt-vlos') | a.soar.Product('phi-hrt-icnt')))
 
 print(search_results_phi_hrt_all)
 
@@ -49,6 +53,7 @@ phi_hrt_icnt_map = sunpy.map.Map(files_phi_hrt_all[5])
 
 phi_hrt_blos_map.plot()
 plt.colorbar(label=phi_hrt_blos_map.unit.to_string())
+plt.clim(-1500,1500)
 
 ########################################
 
@@ -83,13 +88,15 @@ plt.clim(0,1.2)
 # --------------------------
 #
 # We first search for all **Solar Orbiter PHI-FDT** (Full Disc Telescope) data products
-# For this time range, at the time of this example creation 'phi-fdt-vlos' is not available yet via SOAR
 # (excluding 'phi-fdt-stokes' which is not compatible with sunpy.map)
 
 t_start_fdt = Time('2025-02-25T20:00', format='isot', scale='utc')
 t_end_fdt = Time('2025-02-25T23:59', format='isot', scale='utc')
 
-search_results_phi_fdt_all = Fido.search(a.Instrument('PHI'), a.Time(t_start_fdt.value, t_end_fdt.value), (a.soar.Product('phi-fdt-blos') | a.soar.Product('phi-fdt-bmag') | a.soar.Product('phi-fdt-binc') | a.soar.Product('phi-fdt-bazi')| a.soar.Product('phi-fdt-icnt')))
+search_results_phi_fdt_all = Fido.search(a.Instrument('PHI'), a.Time(t_start_fdt.value, t_end_fdt.value),
+                                          (a.soar.Product('phi-fdt-blos') | a.soar.Product('phi-fdt-bmag') |
+                                            a.soar.Product('phi-fdt-binc') | a.soar.Product('phi-fdt-bazi')| 
+                                            a.soar.Product('phi-fdt-vlos')| a.soar.Product('phi-fdt-icnt')))
 
 print(search_results_phi_fdt_all)
 
@@ -106,7 +113,8 @@ phi_fdt_blos_map = sunpy.map.Map(files_phi_fdt_all[0]).rotate(recenter=True)
 phi_fdt_bmag_map = sunpy.map.Map(files_phi_fdt_all[1]).rotate(recenter=True)
 phi_fdt_binc_map = sunpy.map.Map(files_phi_fdt_all[2]).rotate(recenter=True)
 phi_fdt_bazi_map = sunpy.map.Map(files_phi_fdt_all[3]).rotate(recenter=True)
-phi_fdt_icnt_map = sunpy.map.Map(files_phi_fdt_all[4]).rotate(recenter=True)
+phi_fdt_vlos_map = sunpy.map.Map(files_phi_fdt_all[4]).rotate(recenter=True)
+phi_fdt_icnt_map = sunpy.map.Map(files_phi_fdt_all[5]).rotate(recenter=True)
 
 ###############################################################################
 # Make a mask to mask out off-disc pixels and make new sunpy maps
@@ -118,12 +126,14 @@ phi_fdt_blos_map = sunpy.map.Map(phi_fdt_blos_map.data, phi_fdt_blos_map.meta, m
 phi_fdt_bmag_map = sunpy.map.Map(phi_fdt_bmag_map.data, phi_fdt_bmag_map.meta, mask=mask)
 phi_fdt_binc_map = sunpy.map.Map(phi_fdt_binc_map.data, phi_fdt_binc_map.meta, mask=mask)
 phi_fdt_bazi_map = sunpy.map.Map(phi_fdt_bazi_map.data, phi_fdt_bazi_map.meta, mask=mask)
+phi_fdt_vlos_map = sunpy.map.Map(phi_fdt_vlos_map.data, phi_fdt_vlos_map.meta, mask=mask)
 phi_fdt_icnt_map = sunpy.map.Map(phi_fdt_icnt_map.data, phi_fdt_icnt_map.meta, mask=mask)
 
 ########################################
 
 phi_fdt_blos_map.plot()
 plt.colorbar(label=phi_fdt_blos_map.unit.to_string())
+plt.clim(-1500,1500)
 
 ########################################
 
@@ -140,6 +150,12 @@ plt.colorbar(label=phi_fdt_binc_map.unit.to_string())
 
 phi_fdt_bazi_map.plot()
 plt.colorbar(label=phi_fdt_bazi_map.unit.to_string())
+
+########################################
+
+phi_fdt_vlos_map.plot()
+plt.colorbar(label=phi_fdt_vlos_map.unit.to_string())
+plt.clim(-2,2)
 
 ########################################
 

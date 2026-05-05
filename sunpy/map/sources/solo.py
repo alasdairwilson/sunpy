@@ -2,7 +2,7 @@
 Solar Orbiter Map subclass definitions.
 """
 import numpy as np
-from matplotlib.colors import TwoSlopeNorm
+from matplotlib.colors import CenteredNorm
 
 import astropy.units as u
 from astropy.coordinates import CartesianRepresentation
@@ -121,22 +121,22 @@ class PHIMap(GenericMap):
         btype = self.meta.get('btype','').strip().lower()
 
         if btype == 'los magnetic field strength' or btype == 'blos':  # older versions may have blos
-            self.plot_settings['cmap'] = 'hmimag'
-            self.plot_settings['norm'] = ImageNormalize(vmin=-1.5e3, vmax=1.5e3, clip=False)
+            self.plot_settings['cmap'] = 'grey'
+            self.plot_settings['norm'] = CenteredNorm()
         elif btype == 'magnetic field strength' or btype == 'bmag':
-            self.plot_settings['cmap'] = 'rainbow'
+            self.plot_settings['cmap'] = 'plasma'
         elif btype == 'magnetic field inclination' or btype == 'binc':
             self.plot_settings['cmap'] = 'RdGy'
             self.plot_settings['norm'] = ImageNormalize(vmin=0, vmax=180, clip=True)
         elif btype == 'magnetic field azimuth' or btype == 'bazi':
-            self.plot_settings['cmap'] = 'hsv'
+            self.plot_settings['cmap'] = 'twilight'
             self.plot_settings['norm'] = ImageNormalize(vmin=0, vmax=180, clip=True)
         elif btype == 'los velocity' or btype == 'vlos':
             self.plot_settings['cmap'] = 'RdBu_r'
             v=np.nanmax(np.abs(self.data))
-            self.plot_settings['norm'] = TwoSlopeNorm(vcenter=0, vmin=-v, vmax=v)
+            self.plot_settings['norm'] = CenteredNorm()
         elif btype == 'intensity' or btype == 'icnt':
-            self.plot_settings['cmap'] = 'gist_heat'
+            self.plot_settings['cmap'] = 'inferno'
 
         if self.detector == 'HRT':
             try:
