@@ -1,7 +1,6 @@
 """
 Solar Orbiter Map subclass definitions.
 """
-import numpy as np
 from matplotlib.colors import CenteredNorm
 
 import astropy.units as u

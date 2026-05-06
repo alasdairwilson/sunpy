@@ -19,14 +19,14 @@ from sunpy.net import attrs as a
 # Searching for PHI-HRT Data
 # --------------------------
 #
-# We first search for all **Solar Orbiter PHI-HRT** (High Resolution Telescope) 
+# We first search for all **Solar Orbiter PHI-HRT** (High Resolution Telescope)
 # data products # (excluding 'phi-hrt-stokes' which is not compatible with sunpy.map)
 
 t_start_hrt = Time('2024-03-23T20:00', format='isot', scale='utc')
 t_end_hrt = Time('2024-03-23T23:59', format='isot', scale='utc')
 
-search_results_phi_hrt_all = Fido.search(a.Instrument('PHI'), a.Time(t_start_hrt.value, t_end_hrt.value), 
-                                         (a.soar.Product('phi-hrt-blos') | a.soar.Product('phi-hrt-bmag') | 
+search_results_phi_hrt_all = Fido.search(a.Instrument('PHI'), a.Time(t_start_hrt.value, t_end_hrt.value),
+                                         (a.soar.Product('phi-hrt-blos') | a.soar.Product('phi-hrt-bmag') |
                                           a.soar.Product('phi-hrt-binc') | a.soar.Product('phi-hrt-bazi')|
                                           a.soar.Product('phi-hrt-vlos') | a.soar.Product('phi-hrt-icnt')))
 
@@ -95,7 +95,7 @@ t_end_fdt = Time('2025-02-25T23:59', format='isot', scale='utc')
 
 search_results_phi_fdt_all = Fido.search(a.Instrument('PHI'), a.Time(t_start_fdt.value, t_end_fdt.value),
                                           (a.soar.Product('phi-fdt-blos') | a.soar.Product('phi-fdt-bmag') |
-                                            a.soar.Product('phi-fdt-binc') | a.soar.Product('phi-fdt-bazi')| 
+                                            a.soar.Product('phi-fdt-binc') | a.soar.Product('phi-fdt-bazi')|
                                             a.soar.Product('phi-fdt-vlos')| a.soar.Product('phi-fdt-icnt')))
 
 print(search_results_phi_fdt_all)
