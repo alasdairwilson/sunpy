@@ -102,7 +102,7 @@ class PHIMap(GenericMap):
     References
     ----------
     * `Solar Orbiter Mission Page <https://sci.esa.int/web/solar-orbiter/>`__
-    * `PHI Instrument Page <https://www.mps.mpg.de/solar-orbiter/phi>`__
+    * `PHI Instrument Page <https://www.mps.mpg.de/solar-physics/solar-orbiter-phi>`__
     * `PHI-HRT Data Quick Look Page <https://www.uv.es/jublanro/phidata_hrt.html>`__
     * `PHI-FDT Data Quick Look Page <https://www.uv.es/jublanro/phidata_fdt.html>`__
     * Instrument Paper: :cite:t:`solanki_polarimetric_2020`

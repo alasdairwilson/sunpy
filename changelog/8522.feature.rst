@@ -1,1 +1,1 @@
-Add PHIMap class to Solar Orbiter map source.
+Added `~sunpy.map.sources.PHIMap` to handle imagery from the Polarimetric and Helioseismic Imager (PHI) on the Solar Orbiter mission.
