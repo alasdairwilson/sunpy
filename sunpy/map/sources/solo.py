@@ -133,7 +133,6 @@ class PHIMap(GenericMap):
             self.plot_settings['norm'] = ImageNormalize(vmin=0, vmax=180, clip=True)
         elif btype == 'los velocity' or btype == 'vlos':
             self.plot_settings['cmap'] = 'RdBu_r'
-            v=np.nanmax(np.abs(self.data))
             self.plot_settings['norm'] = CenteredNorm()
         elif btype == 'intensity' or btype == 'icnt':
             self.plot_settings['cmap'] = 'inferno'
