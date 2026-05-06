@@ -13,8 +13,6 @@ for instrument details.
 import matplotlib.pyplot as plt
 import sunpy_soar  # noqa: F401
 
-from astropy.time import Time
-
 import sunpy.map
 from sunpy.net import Fido
 from sunpy.net import attrs as a
