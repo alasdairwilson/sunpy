@@ -6,7 +6,7 @@ Plotting Solar Orbiter PHI Data
 This example demonstrates how to plot Solar Orbiter PHI images.
 
 The Polarimetric and Helioseismic Imager (PHI) is an imager on the Solar
-Orbiter mission.  See `this page <https://www.mps.mpg.de/solar-physics/solar-orbiter-phi`>`__
+Orbiter mission.  See `this page <https://www.mps.mpg.de/solar-physics/solar-orbiter-phi>`__
 for instrument details.
 """
 
