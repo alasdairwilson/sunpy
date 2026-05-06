@@ -161,4 +161,4 @@ plt.clim(-2, 2)
 
 phi_fdt_icnt_map.plot()
 plt.colorbar(label=phi_fdt_icnt_map.unit.to_string())
-plt.clim(0,1.2)
+plt.clim(0, 1.2)
